@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 export function Navbar() {
   const [user, setUser] = useState<{ email?: string } | null>(null)
   const [loading, setLoading] = useState(true)
+  const [dueCount, setDueCount] = useState(0)
   const router = useRouter()
   const pathname = usePathname()
   const supabase = createClient()
@@ -18,6 +19,18 @@ export function Navbar() {
         data: { user },
       } = await supabase.auth.getUser()
       setUser(user)
+
+      if (user) {
+        // Fetch due question count
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: dueQuestions } = await (supabase
+          .from('questions')
+          .select('id')
+          .lte('next_review_at', new Date().toISOString())) as any
+
+        setDueCount(dueQuestions?.length || 0)
+      }
+
       setLoading(false)
     }
 
@@ -50,9 +63,16 @@ export function Navbar() {
             <Link href="/dashboard" className="text-lg font-bold text-slate-900">
               FastExams
             </Link>
-            <div className="hidden md:flex gap-1">
+            <div className="hidden md:flex gap-1 items-center">
               <NavLink href="/dashboard" label="Dashboard" pathname={pathname} />
-              <NavLink href="/review" label="Review" pathname={pathname} />
+              <div className="relative">
+                <NavLink href="/review" label="Review" pathname={pathname} />
+                {dueCount > 0 && (
+                  <span className="absolute -top-2 -right-2 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full">
+                    {dueCount}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
