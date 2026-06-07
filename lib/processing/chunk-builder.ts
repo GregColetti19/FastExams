@@ -13,7 +13,7 @@ export function buildChunks(
   const sections = markdown.split(/^## /m).filter((s) => s.trim())
 
   // First section before any ## is the intro (if it exists)
-  const introMatch = markdown.match(/^(.*?)(?:^## )/ms)
+  const introMatch = markdown.match(/^(.*?)\n## /s)
   let sectionIndex = 0
 
   if (introMatch && introMatch[1].trim()) {

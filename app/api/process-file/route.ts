@@ -73,13 +73,17 @@ export async function POST(request: NextRequest) {
           .eq('id', file.exam_id)
       }
 
-      // Trigger question generation (stub for now, Phase 3 implements this)
-      // In production: call /api/generate-questions asynchronously
-      if (fileRole === 'theory') {
-        // TODO: Phase 3 - Call extract-topics and generate-questions
-      } else if (fileRole === 'past_exam') {
-        // TODO: Phase 3 - Call extract-past-exam-questions and match-to-theory
-      }
+      // Trigger question generation
+      const generateUrl = `${request.nextUrl.origin}/api/generate-questions`
+      setImmediate(() => {
+        fetch(generateUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileId, fileRole }),
+        }).catch((error) => {
+          console.error('Failed to trigger question generation:', error)
+        })
+      })
 
       // Update file status to done
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

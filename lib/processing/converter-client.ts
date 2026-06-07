@@ -12,8 +12,9 @@ export async function convertFile(
 ): Promise<ConverterResponse> {
   try {
     const formData = new FormData()
-    const blob = new Blob([fileBuffer], {
-      mimeType: fileType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    const uint8array = new Uint8Array(fileBuffer)
+    const blob = new Blob([uint8array], {
+      type: fileType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     })
     formData.append('file', blob, `file.${fileType}`)
     formData.append('file_type', fileType)
