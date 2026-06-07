@@ -1,4 +1,4 @@
-// @ts-ignore - franc doesn't have types
+// @ts-expect-error - franc doesn't have types
 import { franc } from 'franc'
 
 // Map ISO 639-3 codes to ISO 639-1 codes and human-readable names
