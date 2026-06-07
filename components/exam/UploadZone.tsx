@@ -1,0 +1,260 @@
+'use client'
+
+import { useRef, useState, useEffect } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { FileRole, ProcessingStatus } from '@/types'
+
+interface UploadZoneProps {
+  examId: string
+}
+
+export function UploadZone({ examId }: UploadZoneProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [dragActive, setDragActive] = useState(false)
+  const [fileRole, setFileRole] = useState<FileRole>('theory')
+  const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [files, setFiles] = useState<Array<{ id: string; name: string; status: ProcessingStatus; error?: string }>>([])
+  const [pollInterval, setPollInterval] = useState<number | null>(null)
+  const supabase = createClient()
+
+  // Poll for file status updates
+  useEffect(() => {
+    if (!pollInterval) return
+
+    const interval = setInterval(async () => {
+      const updatedFiles = await Promise.all(
+        files.map(async (f) => {
+          if (f.status === 'done' || f.status === 'error') return f
+
+          const { data } = await supabase.from('files').select('processing_status, processing_error').eq('id', f.id).single() as any
+
+          return {
+            ...f,
+            status: data?.processing_status || f.status,
+            error: data?.processing_error || f.error,
+          }
+        })
+      )
+
+      setFiles(updatedFiles)
+
+      // Stop polling if all files are done/error
+      if (updatedFiles.every((f) => f.status === 'done' || f.status === 'error')) {
+        setPollInterval(null)
+      }
+    }, 2000)
+
+    return () => clearInterval(interval)
+  }, [pollInterval, files, supabase])
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true)
+    } else if (e.type === 'dragleave') {
+      setDragActive(false)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFiles(e.dataTransfer.files)
+    }
+  }
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      handleFiles(e.target.files)
+    }
+  }
+
+  const handleFiles = async (fileList: FileList) => {
+    const file = fileList[0]
+
+    if (!file) return
+
+    // Validate file type
+    const fileName = file.name.toLowerCase()
+    if (!fileName.endsWith('.pdf') && !fileName.endsWith('.pptx')) {
+      alert('Only PDF and PPTX files are supported')
+      return
+    }
+
+    setUploading(true)
+    setUploadProgress(0)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('examId', examId)
+      formData.append('fileRole', fileRole)
+
+      // Upload with progress tracking
+      const xhr = new XMLHttpRequest()
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          setUploadProgress(Math.round((e.loaded / e.total) * 100))
+        }
+      })
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status === 201) {
+          const response = JSON.parse(xhr.responseText)
+          setFiles([
+            ...files,
+            {
+              id: response.fileId,
+              name: file.name,
+              status: 'pending' as ProcessingStatus,
+            },
+          ])
+          setPollInterval(2000) // Start polling
+        } else {
+          const error = JSON.parse(xhr.responseText)
+          alert(`Upload failed: ${error.error}`)
+        }
+        setUploading(false)
+        setUploadProgress(0)
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ''
+        }
+      })
+
+      xhr.addEventListener('error', () => {
+        alert('Upload failed')
+        setUploading(false)
+        setUploadProgress(0)
+      })
+
+      xhr.open('POST', '/api/upload')
+      xhr.send(formData)
+    } catch (error) {
+      console.error('Upload error:', error)
+      alert('Upload failed')
+      setUploading(false)
+      setUploadProgress(0)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-8">
+        <h2 className="text-2xl font-semibold text-slate-900 mb-6">Upload Study Material</h2>
+
+        {/* File Role Toggle */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-slate-700 mb-3">File Type</label>
+          <div className="flex gap-4">
+            {(['theory', 'past_exam'] as const).map((role) => (
+              <label key={role} className="flex items-center">
+                <input
+                  type="radio"
+                  name="fileRole"
+                  value={role}
+                  checked={fileRole === role}
+                  onChange={(e) => setFileRole(e.target.value as FileRole)}
+                  disabled={uploading}
+                  className="mr-2"
+                />
+                <span className="text-sm text-slate-700">
+                  {role === 'theory' ? 'Theory Material' : 'Past Exam Paper'}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Drop Zone */}
+        <div
+          onDragEnter={handleDrag}
+          onDragLeave={handleDrag}
+          onDragOver={handleDrag}
+          onDrop={handleDrop}
+          className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+            dragActive ? 'border-blue-500 bg-blue-50' : 'border-slate-300'
+          } ${uploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.pptx"
+            onChange={handleChange}
+            disabled={uploading}
+            className="hidden"
+          />
+
+          <div onClick={() => !uploading && fileInputRef.current?.click()}>
+            <svg
+              className="mx-auto h-12 w-12 text-slate-400 mb-3"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+              />
+            </svg>
+
+            <p className="text-lg font-medium text-slate-900 mb-1">Drag and drop your file here</p>
+            <p className="text-sm text-slate-600">or click to select from your computer</p>
+            <p className="text-xs text-slate-500 mt-2">Supported: PDF, PPTX (max 300MB)</p>
+          </div>
+        </div>
+
+        {/* Upload Progress */}
+        {uploading && (
+          <div className="mt-4">
+            <div className="flex justify-between items-center mb-2">
+              <p className="text-sm font-medium text-slate-700">Uploading...</p>
+              <span className="text-sm text-slate-600">{uploadProgress}%</span>
+            </div>
+            <div className="w-full bg-slate-200 rounded-full h-2">
+              <div
+                className="bg-blue-600 h-2 rounded-full transition-all"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* File Status List */}
+      {files.length > 0 && (
+        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+          <h3 className="text-lg font-semibold text-slate-900 mb-4">Upload Status</h3>
+          <div className="space-y-3">
+            {files.map((f) => (
+              <div key={f.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-slate-900">{f.name}</p>
+                  <p className="text-xs text-slate-600 mt-1">
+                    {f.status === 'pending' && 'Waiting to process...'}
+                    {f.status === 'processing' && 'Processing...'}
+                    {f.status === 'done' && '✓ Complete'}
+                    {f.status === 'error' && `✗ Error: ${f.error || 'Unknown error'}`}
+                  </p>
+                </div>
+                <div>
+                  {f.status === 'pending' && <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />}
+                  {f.status === 'processing' && <div className="w-4 h-4 border-2 border-orange-600 border-t-transparent rounded-full animate-spin" />}
+                  {f.status === 'done' && <span className="text-green-600 font-bold">✓</span>}
+                  {f.status === 'error' && <span className="text-red-600 font-bold">✗</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
