@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient_ } from '@/lib/supabase/server'
 import { convertFile } from '@/lib/processing/converter-client'
 import { detectLanguage } from '@/lib/processing/language-detector'
-import { buildChunks } from '@/lib/processing/chunk-builder'
+import { buildChunks, splitChunksByTokens, toChunkRow } from '@/lib/processing/chunk-builder'
+import { embedTexts } from '@/lib/ai/embeddings'
 
 export async function POST(request: NextRequest) {
   try {
@@ -45,13 +46,28 @@ export async function POST(request: NextRequest) {
       // Detect language
       const langResult = detectLanguage(convertResult.markdown)
 
-      // Build chunks
-      const chunks = buildChunks(convertResult.markdown, fileId, 1, langResult.code)
+      // Build chunks, then size-split so heading-less docs (converters often
+      // emit one giant section) become granular, embeddable units (~500 tokens).
+      const chunks = splitChunksByTokens(
+        buildChunks(convertResult.markdown, fileId, 1, langResult.code),
+        500
+      )
 
-      // Insert chunks into database
+      // Embed for retrieval (best-effort — don't fail ingestion if embeddings do).
+      let embeddings: number[][] = []
       if (chunks.length > 0) {
+        try {
+          embeddings = await embedTexts(chunks.map((c) => c.text))
+        } catch (embedError) {
+          console.error('Chunk embedding failed (continuing without):', embedError)
+        }
+      }
+
+      // Map camelCase ContentChunk -> snake_case DB row (with embedding) and insert
+      if (chunks.length > 0) {
+        const rows = chunks.map((c, i) => toChunkRow(c, embeddings[i] ?? null))
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: chunkError } = await supabase.from('chunks').insert(chunks as any)
+        const { error: chunkError } = await supabase.from('chunks').insert(rows as any)
 
         if (chunkError) {
           throw new Error(`Failed to insert chunks: ${chunkError.message}`)

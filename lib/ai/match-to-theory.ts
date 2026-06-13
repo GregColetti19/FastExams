@@ -1,5 +1,6 @@
 import { PROMPTS, parseJsonResponse } from './prompts'
 import { getClient, AI_MODEL } from './client'
+import { cosineSimilarity } from './embeddings'
 
 export interface TheoryMatchResult {
   subtopicId: string
@@ -56,6 +57,27 @@ export function findBestMatchingChunk(
     subtopicId: bestChunk.subtopicId,
     score: bestScore,
   }
+}
+
+/**
+ * Embedding-based retrieval: find the theory chunk most semantically similar to
+ * a question, by cosine similarity over precomputed embeddings. Replaces the
+ * TF-IDF keyword overlap above (which misses paraphrase/synonyms, esp. in
+ * Portuguese medical text). Chunks without embeddings are skipped.
+ */
+export function findBestChunkByEmbedding(
+  queryEmbedding: number[],
+  chunks: Array<{ id: string; subtopicId: string | null; embedding: number[] | null }>
+): { chunkId: string; subtopicId: string | null; score: number } {
+  let best = { chunkId: '', subtopicId: null as string | null, score: -1 }
+  for (const c of chunks) {
+    if (!c.embedding || c.embedding.length === 0) continue
+    const score = cosineSimilarity(queryEmbedding, c.embedding)
+    if (score > best.score) {
+      best = { chunkId: c.id, subtopicId: c.subtopicId, score }
+    }
+  }
+  return best.score < 0 ? { chunkId: '', subtopicId: null, score: 0 } : best
 }
 
 /**

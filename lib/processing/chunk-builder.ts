@@ -1,6 +1,25 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { ContentChunk } from '@/types'
 
+/**
+ * Map a ContentChunk (camelCase, from buildChunks) to a chunks-table row
+ * (snake_case DB columns). Without this the insert dropped content_text,
+ * candidate_subtopic, etc., breaking the theory pipeline downstream.
+ */
+export function toChunkRow(c: ContentChunk, embedding: number[] | null = null) {
+  return {
+    file_id: c.fileId,
+    content_text: c.text,
+    image_storage_path: c.imageStoragePath,
+    has_image: c.hasImage,
+    page_or_slide: c.pageOrSlide,
+    candidate_topic: c.candidateTopic ?? null,
+    candidate_subtopic: c.candidateSubtopic ?? null,
+    language: c.language,
+    embedding,
+  }
+}
+
 export function buildChunks(
   markdown: string,
   fileId: string,

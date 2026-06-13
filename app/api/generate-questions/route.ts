@@ -3,12 +3,15 @@ import { createServerClient_ } from '@/lib/supabase/server'
 import { extractTopics, buildOutlineFromChunks } from '@/lib/ai/extract-topics'
 import { generateQuestionsFromChunks } from '@/lib/ai/generate-questions'
 import { extractPastExamQuestions } from '@/lib/ai/extract-past-exam-questions'
-import { findBestMatchingChunk } from '@/lib/ai/match-to-theory'
+import { findBestChunkByEmbedding } from '@/lib/ai/match-to-theory'
+import { embedTexts } from '@/lib/ai/embeddings'
 import { answerExamQuestion } from '@/lib/ai/answer-exam-question'
 import { generateFlashcardsFromChunks } from '@/lib/ai/generate-flashcards'
 
-// Below this match score, the theory grounding is too weak to trust an answer.
-const MATCH_MIN_SCORE = 0.12
+// Below this cosine score, theory grounding is too weak to attempt an answer.
+// Permissive on purpose: the answer step (confidence/answerable) is the real
+// quality gate; this only decides whether to try grounding at all.
+const EMBED_MATCH_MIN_SCORE = 0.25
 // Below this AI confidence, flag the question as unanswerable rather than assert.
 const ANSWER_MIN_CONFIDENCE = 0.4
 
@@ -349,11 +352,37 @@ async function processPastExamFile(
         .in('file_id', theoryFileIds)
       theoryChunks = (data || []).filter((c: any) => c.subtopic_id)
     }
-    const theoryCandidates = theoryChunks.map((c) => ({
+    // Embed theory chunks (use stored embedding, else compute on demand) so we
+    // rank by semantic similarity instead of keyword overlap.
+    const needEmbed = theoryChunks.filter(
+      (c) => !Array.isArray(c.embedding) || c.embedding.length === 0
+    )
+    if (needEmbed.length > 0) {
+      try {
+        const vecs = await embedTexts(needEmbed.map((c) => c.content_text || ''))
+        needEmbed.forEach((c, i) => {
+          c.embedding = vecs[i]
+        })
+      } catch (e) {
+        console.error('Theory chunk embedding failed:', e)
+      }
+    }
+    const embeddedCandidates = theoryChunks.map((c) => ({
       id: c.id,
-      text: c.content_text,
       subtopicId: c.subtopic_id,
+      embedding: c.embedding,
     }))
+
+    // Embed all MCQ question texts in one batch.
+    const mcqs = examResult.questions.filter((q) => q.type === 'mcq')
+    let qVectors: number[][] = []
+    if (mcqs.length > 0 && embeddedCandidates.length > 0) {
+      try {
+        qVectors = await embedTexts(mcqs.map((q) => q.question_text))
+      } catch (e) {
+        console.error('Question embedding failed:', e)
+      }
+    }
 
     let unsortedSubtopicId: string | null = null
 
@@ -361,16 +390,17 @@ async function processPastExamFile(
     let questionsFlagged = 0
     const questionErrors: string[] = []
 
-    for (const q of examResult.questions) {
-      if (q.type !== 'mcq') continue // open questions can't be auto-graded yet
+    for (let qi = 0; qi < mcqs.length; qi++) {
+      const q = mcqs[qi]
 
       try {
-        // Find the best-matching theory chunk to ground the answer.
+        // Rank theory chunks by cosine similarity to the question.
+        const qVec = qVectors[qi]
         const match =
-          theoryCandidates.length > 0
-            ? findBestMatchingChunk(q.question_text, theoryCandidates)
-            : { chunkId: '', subtopicId: '', score: 0 }
-        const grounded = match.score >= MATCH_MIN_SCORE && !!match.subtopicId
+          qVec && embeddedCandidates.length > 0
+            ? findBestChunkByEmbedding(qVec, embeddedCandidates)
+            : { chunkId: '', subtopicId: null as string | null, score: 0 }
+        const grounded = match.score >= EMBED_MATCH_MIN_SCORE && !!match.subtopicId
         const matchedChunk = grounded
           ? theoryChunks.find((c) => c.id === match.chunkId)
           : undefined

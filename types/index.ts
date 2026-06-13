@@ -80,6 +80,8 @@ export interface Chunk {
   image_storage_path: string | null;
   has_image: boolean;
   page_or_slide: number;
+  /** OpenAI text-embedding-3-small vector (1536d) for retrieval; null until embedded. */
+  embedding: number[] | null;
   created_at: string;
 }
 

@@ -17,6 +17,7 @@ import { detectLanguage } from '@/lib/processing/language-detector'
 import { buildChunks } from '@/lib/processing/chunk-builder'
 import { extractPastExamQuestions } from '@/lib/ai/extract-past-exam-questions'
 import { answerExamQuestion } from '@/lib/ai/answer-exam-question'
+import { embedTexts, cosineSimilarity } from '@/lib/ai/embeddings'
 
 // vitest.config.ts injects MOCK_AI='true' into test env. getClient() reads the
 // flag per-call, so flip it back to real here for the smoke run.
@@ -106,6 +107,24 @@ describe.skipIf(!process.env.SMOKE)('pipeline smoke', () => {
       expect(ans.answerable).toBe(true)
       expect(ans.choice.length).toBeGreaterThan(0)
       expect(ans.sourceQuote.length).toBeGreaterThan(0)
+
+      // STAGE 5: embedding retrieval on real Portuguese medical text (REAL OpenAI).
+      // The relevant theory must out-rank an unrelated one for Q1 (Rh isoimmunization).
+      const relevant =
+        'Isoimunização Rh e profilaxia com imunoglobulina anti-D na gravidez ' +
+        'em situações de hemorragia feto-materna.'
+      const unrelated =
+        'Estenose hipertrófica do piloro no lactente: vómitos em jato e ' +
+        'desidratação hipoclorémica.'
+      const [qVec, relVec, unrelVec] = await embedTexts([
+        qs[0].question_text,
+        relevant,
+        unrelated,
+      ])
+      const simRel = cosineSimilarity(qVec, relVec)
+      const simUnrel = cosineSimilarity(qVec, unrelVec)
+      log('5 retrieval', `cos(relevant)=${simRel.toFixed(3)} > cos(unrelated)=${simUnrel.toFixed(3)}`)
+      expect(simRel).toBeGreaterThan(simUnrel)
     },
     180_000
   )
