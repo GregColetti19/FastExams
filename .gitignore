@@ -34,3 +34,25 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local mock DB
+.dev-data/
+
+# python converter
+converter/venv/
+__pycache__/
+*.pyc
+
+# converter test fixtures + artifacts (real exam PDFs kept local; large)
+converter/input_test/
+converter/output_test/
+
+# graphify knowledge-graph output (local tooling)
+graphify-out/
+
+# editor / local agent config
+.vscode/
+.claude/
+
+# background task outputs
+*.output

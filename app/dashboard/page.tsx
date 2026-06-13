@@ -5,19 +5,14 @@ import { NewExamDialog } from '@/components/exam/NewExamDialog'
 
 export default async function DashboardPage() {
   const supabase = await createServerClient_()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
 
-  if (!user) {
-    redirect('/login')
-  }
-
+  // Dev mode: use mock user
+  const mockUserId = '6a7223fc-a96d-434a-9125-98ba6e4daca3'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: exams } = (await supabase
     .from('exams')
     .select('id, name, description, created_at, updated_at, user_id, exam_id, language')
-    .eq('user_id', user.id)
+    .eq('user_id', mockUserId)
     .order('created_at', { ascending: false })) as any
 
   return (

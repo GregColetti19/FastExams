@@ -5,20 +5,13 @@ import { TopicGrid } from '@/components/exam/TopicGrid'
 
 export default async function ExamPage({ params }: { params: { examId: string } }) {
   const supabase = await createServerClient_()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
 
-  if (!user) {
-    redirect('/login')
-  }
-
+  // Dev mode: skip auth
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: exam } = (await supabase
     .from('exams')
     .select('*')
     .eq('id', params.examId)
-    .eq('user_id', user.id)
     .single()) as any
 
   if (!exam) {

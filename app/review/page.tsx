@@ -4,13 +4,8 @@ import { createServerClient_ } from '@/lib/supabase/server'
 
 export default async function ReviewPage() {
   const supabase = await createServerClient_()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
 
-  if (!user) {
-    redirect('/login')
-  }
+  // Dev mode: skip auth
 
   // Fetch due questions
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

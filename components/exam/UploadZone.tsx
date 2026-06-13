@@ -14,6 +14,7 @@ export function UploadZone({ examId }: UploadZoneProps) {
   const [fileRole, setFileRole] = useState<FileRole>('theory')
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [files, setFiles] = useState<Array<{ id: string; name: string; status: ProcessingStatus; error?: string }>>([])
   const [pollInterval, setPollInterval] = useState<number | null>(null)
   const supabase = createClient()
@@ -79,10 +80,12 @@ export function UploadZone({ examId }: UploadZoneProps) {
 
     if (!file) return
 
+    setUploadError(null)
+
     // Validate file type
     const fileName = file.name.toLowerCase()
     if (!fileName.endsWith('.pdf') && !fileName.endsWith('.pptx')) {
-      alert('Only PDF and PPTX files are supported')
+      setUploadError('Only PDF and PPTX files are supported')
       return
     }
 
@@ -117,8 +120,12 @@ export function UploadZone({ examId }: UploadZoneProps) {
           ])
           setPollInterval(2000) // Start polling
         } else {
-          const error = JSON.parse(xhr.responseText)
-          alert(`Upload failed: ${error.error}`)
+          try {
+            const body = JSON.parse(xhr.responseText)
+            setUploadError(`Upload failed (${xhr.status}): ${body.error || xhr.statusText}`)
+          } catch {
+            setUploadError(`Upload failed (${xhr.status}): ${xhr.statusText}`)
+          }
         }
         setUploading(false)
         setUploadProgress(0)
@@ -128,7 +135,7 @@ export function UploadZone({ examId }: UploadZoneProps) {
       })
 
       xhr.addEventListener('error', () => {
-        alert('Upload failed')
+        setUploadError('Network error — could not reach server. Check your connection.')
         setUploading(false)
         setUploadProgress(0)
       })
@@ -137,7 +144,7 @@ export function UploadZone({ examId }: UploadZoneProps) {
       xhr.send(formData)
     } catch (error) {
       console.error('Upload error:', error)
-      alert('Upload failed')
+      setUploadError(error instanceof Error ? error.message : 'Upload failed')
       setUploading(false)
       setUploadProgress(0)
     }
@@ -226,6 +233,18 @@ export function UploadZone({ examId }: UploadZoneProps) {
             </div>
           </div>
         )}
+
+        {uploadError && (
+          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            {uploadError}
+            <button
+              onClick={() => setUploadError(null)}
+              className="ml-2 text-red-500 underline text-xs hover:no-underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
       </div>
 
       {/* File Status List */}
@@ -239,7 +258,8 @@ export function UploadZone({ examId }: UploadZoneProps) {
                   <p className="text-sm font-medium text-slate-900">{f.name}</p>
                   <p className="text-xs text-slate-600 mt-1">
                     {f.status === 'pending' && 'Waiting to process...'}
-                    {f.status === 'processing' && 'Processing...'}
+                    {f.status === 'processing' && 'Converting file...'}
+                    {f.status === 'generating_questions' && 'Generating questions...'}
                     {f.status === 'done' && '✓ Complete'}
                     {f.status === 'error' && `✗ Error: ${f.error || 'Unknown error'}`}
                   </p>
@@ -247,6 +267,7 @@ export function UploadZone({ examId }: UploadZoneProps) {
                 <div>
                   {f.status === 'pending' && <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />}
                   {f.status === 'processing' && <div className="w-4 h-4 border-2 border-orange-600 border-t-transparent rounded-full animate-spin" />}
+                  {f.status === 'generating_questions' && <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />}
                   {f.status === 'done' && <span className="text-green-600 font-bold">✓</span>}
                   {f.status === 'error' && <span className="text-red-600 font-bold">✗</span>}
                 </div>

@@ -73,6 +73,12 @@ export async function POST(request: NextRequest) {
           .eq('id', file.exam_id)
       }
 
+      // Update file status to generating_questions (before triggering async work)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase.from('files') as any)
+        .update({ processing_status: 'generating_questions' })
+        .eq('id', fileId)
+
       // Trigger question generation
       const generateUrl = `${request.nextUrl.origin}/api/generate-questions`
       setImmediate(() => {
@@ -80,16 +86,22 @@ export async function POST(request: NextRequest) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fileId, fileRole }),
-        }).catch((error) => {
+        }).catch(async (error) => {
           console.error('Failed to trigger question generation:', error)
+          // Write failure back to DB so client can see it
+          try {
+            const supabaseInner = await createServerClient_()
+            await (supabaseInner.from('files') as any)
+              .update({
+                processing_status: 'error',
+                processing_error: `Question generation trigger failed: ${error instanceof Error ? error.message : String(error)}`,
+              })
+              .eq('id', fileId)
+          } catch (dbError) {
+            console.error(`Failed to update file status for ${fileId}:`, dbError)
+          }
         })
       })
-
-      // Update file status to done
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from('files') as any)
-        .update({ processing_status: 'done' })
-        .eq('id', fileId)
 
       return NextResponse.json(
         {
@@ -98,6 +110,7 @@ export async function POST(request: NextRequest) {
           chunksCreated: chunks.length,
           language: langResult.code,
           converterUsed: convertResult.converter_used,
+          processingStatus: 'generating_questions',
         },
         { status: 200 }
       )

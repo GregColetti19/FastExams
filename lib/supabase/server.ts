@@ -1,8 +1,12 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { Database } from '@/types'
+import { isMockDb } from './mock-mode'
+import { createMockClient } from './mock/client'
+import { getFileStore } from './mock/persist'
 
 export async function createServerClient_() {
+  if (isMockDb()) return createMockClient(getFileStore()) as any
   const cookieStore = await cookies()
 
   return createServerClient<Database>(
@@ -28,6 +32,7 @@ export async function createServerClient_() {
 }
 
 export async function createServerClientServiceRole() {
+  if (isMockDb()) return createMockClient(getFileStore()) as any
   const cookieStore = await cookies()
 
   return createServerClient<Database>(

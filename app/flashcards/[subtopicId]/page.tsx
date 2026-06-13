@@ -4,13 +4,8 @@ import { FlashcardEngine } from '@/components/flashcards/FlashcardEngine'
 
 export default async function FlashcardsPage({ params }: { params: { subtopicId: string } }) {
   const supabase = await createServerClient_()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
 
-  if (!user) {
-    redirect('/login')
-  }
+  // Dev mode: skip auth
 
   // Fetch subtopic info
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -18,7 +18,12 @@ export default function Error({
     <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
       <div className="text-center max-w-md">
         <h2 className="text-3xl font-bold text-red-600 mb-4">Something went wrong</h2>
-        <p className="text-slate-600 mb-6">{error.message || 'An unexpected error occurred.'}</p>
+        <p className="text-slate-600 mb-2">{error.message || 'An unexpected error occurred.'}</p>
+        {error.digest && (
+          <p className="text-xs text-slate-400 font-mono mb-6">
+            Ref: {error.digest}
+          </p>
+        )}
 
         <div className="flex gap-3">
           <button

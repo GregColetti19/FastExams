@@ -1,7 +1,5 @@
-import { Anthropic } from '@anthropic-ai/sdk'
 import { PROMPTS, parseJsonResponse } from './prompts'
-
-const client = new Anthropic()
+import { getClient, AI_MODEL } from './client'
 
 export interface TheoryMatchResult {
   subtopicId: string
@@ -78,15 +76,15 @@ export async function generateJustification(
     matched_chunk_text: matchedChunkText,
   })
 
-  const message = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+  const message = await getClient().messages.create({
+    model: AI_MODEL,
     max_tokens: 1024,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user }],
   })
 
   const responseText =
-    message.content[0].type === 'text' ? message.content[0].text : ''
+    message.content[0].type === 'text' ? (message.content[0].text ?? '') : ''
 
   const parsed = parseJsonResponse(responseText) as JustificationResult
 

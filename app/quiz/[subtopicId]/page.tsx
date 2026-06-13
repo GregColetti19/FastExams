@@ -4,13 +4,8 @@ import { QuizEngine } from '@/components/quiz/QuizEngine'
 
 export default async function QuizPage({ params }: { params: { subtopicId: string } }) {
   const supabase = await createServerClient_()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
 
-  if (!user) {
-    redirect('/login')
-  }
+  // Dev mode: skip auth
 
   // Fetch subtopic with topic/exam info
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

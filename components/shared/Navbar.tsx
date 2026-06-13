@@ -47,11 +47,8 @@ export function Navbar() {
     return null
   }
 
+  // In dev, skip auth check
   if (loading) {
-    return null
-  }
-
-  if (!user) {
     return null
   }
 
@@ -77,13 +74,15 @@ export function Navbar() {
           </div>
 
           <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-600">{user.email}</span>
-            <button
-              onClick={handleSignOut}
-              className="text-sm text-blue-600 hover:text-blue-700"
-            >
-              Sign out
-            </button>
+            <span className="text-sm text-slate-600">{user?.email || 'dev@example.com'}</span>
+            {user && (
+              <button
+                onClick={handleSignOut}
+                className="text-sm text-blue-600 hover:text-blue-700"
+              >
+                Sign out
+              </button>
+            )}
           </div>
         </div>
       </div>

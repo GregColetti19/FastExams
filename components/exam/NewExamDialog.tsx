@@ -19,21 +19,15 @@ export function NewExamDialog() {
     setLoading(true)
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-
-      if (!user) {
-        setError('Not authenticated')
-        return
-      }
+      // Dev mode: use mock user
+      const mockUserId = '6a7223fc-a96d-434a-9125-98ba6e4daca3'
 
       const { data, error: dbError } = (await supabase
         .from('exams')
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .insert([
           {
-            user_id: user.id,
+            user_id: mockUserId,
             name,
             description: description || null,
           },
@@ -49,8 +43,8 @@ export function NewExamDialog() {
       if (data && data[0]) {
         router.push(`/exam/${data[0].id}/upload`)
       }
-    } catch {
-      setError('An error occurred')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred')
     } finally {
       setLoading(false)
     }

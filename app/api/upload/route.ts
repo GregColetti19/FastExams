@@ -7,13 +7,9 @@ const MAX_FILE_SIZE_MB = parseInt(process.env.MAX_FILE_SIZE_MB || '300')
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerClient_()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
 
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, { status: 401 })
-    }
+    // Dev mode: skip auth, use mock user
+    const mockUserId = '6a7223fc-a96d-434a-9125-98ba6e4daca3'
 
     const formData = await request.formData()
     const file = formData.get('file') as File
@@ -57,12 +53,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify exam ownership
+    // Verify exam exists (skip ownership check in dev mode)
     const { data: exam } = await supabase
       .from('exams')
       .select('id')
       .eq('id', examId)
-      .eq('user_id', user.id)
       .single() as any
 
     if (!exam) {
@@ -71,7 +66,7 @@ export async function POST(request: NextRequest) {
 
     // Upload file to Supabase Storage
     const fileBuffer = Buffer.from(await file.arrayBuffer())
-    const storagePath = `${user.id}/${examId}/${Date.now()}-${fileName}`
+    const storagePath = `${Date.now()}-${fileName}`
 
     const { error: uploadError } = await supabase.storage
       .from('uploads')

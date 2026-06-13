@@ -1,7 +1,5 @@
-import { Anthropic } from '@anthropic-ai/sdk'
 import { PROMPTS, parseJsonResponse } from './prompts'
-
-const client = new Anthropic()
+import { getClient, AI_MODEL } from './client'
 
 export interface QuestionOption {
   text: string
@@ -33,15 +31,15 @@ export async function generateQuestionsFromText(
     text,
   })
 
-  const message = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+  const message = await getClient().messages.create({
+    model: AI_MODEL,
     max_tokens: 2048,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user }],
   })
 
   const responseText =
-    message.content[0].type === 'text' ? message.content[0].text : ''
+    message.content[0].type === 'text' ? (message.content[0].text ?? '') : ''
 
   const parsed = parseJsonResponse(responseText) as QuestionGenerationResult
 
@@ -63,8 +61,8 @@ export async function generateQuestionsFromImage(
     text,
   })
 
-  const message = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+  const message = await getClient().messages.create({
+    model: AI_MODEL,
     max_tokens: 2048,
     system: prompt.system,
     messages: [
@@ -90,7 +88,7 @@ export async function generateQuestionsFromImage(
   })
 
   const responseText =
-    message.content[0].type === 'text' ? message.content[0].text : ''
+    message.content[0].type === 'text' ? (message.content[0].text ?? '') : ''
 
   const parsed = parseJsonResponse(responseText) as QuestionGenerationResult
 
