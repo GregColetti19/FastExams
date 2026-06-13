@@ -1,7 +1,7 @@
 // Shared TypeScript types for FastExams
 
 export type FileRole = 'theory' | 'past_exam';
-export type ProcessingStatus = 'pending' | 'processing' | 'done' | 'error';
+export type ProcessingStatus = 'pending' | 'processing' | 'generating_questions' | 'done' | 'error';
 export type QuestionSource = 'ai_generated' | 'past_exam';
 export type QuestionType = 'mcq' | 'true_false' | 'fill_blank' | 'flashcard';
 
@@ -95,6 +95,10 @@ export interface Question {
   source: QuestionSource;
   past_exam_year: string | null;
   matched_chunk_id: string | null;
+  /** 0–1 confidence of an AI-inferred past-exam answer; null otherwise. */
+  ai_confidence: number | null;
+  /** 'ai_answered' | 'unanswerable' | 'user_set' */
+  answer_status: string;
   times_seen: number;
   times_correct: number;
   current_interval_days: number;

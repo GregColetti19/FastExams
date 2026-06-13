@@ -1,5 +1,8 @@
 // @ts-expect-error - franc doesn't have types
-import { franc } from 'franc'
+// Default import: this franc build is CommonJS (module.exports = fn). A named
+// `{ franc }` import resolves to undefined, throwing in the call below and
+// silently falling back to English.
+import franc from 'franc'
 
 // Map ISO 639-3 codes to ISO 639-1 codes and human-readable names
 const CODE_TO_LANGUAGE: Record<string, { code: string; name: string }> = {
@@ -32,8 +35,15 @@ export interface LanguageDetectionResult {
 }
 
 export function detectLanguage(text: string, minLength: number = 100): LanguageDetectionResult {
-  // Take first 500 characters for detection
-  const sample = text.slice(0, 500).trim()
+  // Use a larger window and strip MCQ noise (question numbers, option letters)
+  // so franc sees prose, not "1- ... A. ... B. ...". A 500-char title-heavy
+  // sample mis-detected Portuguese exams as English.
+  const sample = text
+    .slice(0, 3000)
+    .replace(/^\s*\d+\s*[-.)]/gm, ' ') // question numbers: "1-", "2."
+    .replace(/^\s*[A-E]\s*[.)]/gm, ' ') // option markers: "A.", "B)"
+    .replace(/\s+/g, ' ')
+    .trim()
 
   if (sample.length < minLength) {
     return { code: 'en', name: 'English', confidence: 0 }

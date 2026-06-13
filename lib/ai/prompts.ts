@@ -202,12 +202,50 @@ Respond with:
   "justification": "..."
 }`,
   }),
+
+  examAnswerDetermination: (params: {
+    language: string
+    question_text: string
+    options: string[]
+    theory_text: string
+  }) => ({
+    system: `You are an expert medical educator answering exam multiple-choice questions.
+You answer ONLY from the provided source material — never from outside knowledge.
+If the source does not contain enough information to determine the answer, you say so instead of guessing.
+Always respond with valid JSON only. No preamble, no markdown fences.`,
+    user: `Answer this multiple-choice exam question using ONLY the source material below.
+Document language: ${params.language}. Write the justification in ${params.language}.
+
+Question: ${params.question_text}
+Options:
+${params.options.join('\n')}
+
+Source material (theory):
+${params.theory_text}
+
+Rules:
+- Pick the correct option ONLY if the source material supports it.
+- Quote the exact supporting sentence from the source in "source_quote".
+- If the source does NOT contain enough information to answer confidently, set "answerable": false, "confidence": 0, and leave "choice" empty. Do NOT guess from outside knowledge.
+- "confidence" is 0.0–1.0: how strongly the source supports your choice.
+- "choice" is the option letter (e.g. "B"); "choice_text" is that option's text.
+
+Respond with:
+{
+  "answerable": true,
+  "choice": "B",
+  "choice_text": "...",
+  "confidence": 0.0,
+  "justification": "...",
+  "source_quote": "..."
+}`,
+  }),
 }
 
 /**
  * Parse JSON response from Claude, stripping markdown fences if present
  */
 export function parseJsonResponse(text: string): unknown {
-  const cleaned = text.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim()
+  const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
   return JSON.parse(cleaned)
 }
