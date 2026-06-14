@@ -1,12 +1,12 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { Database } from '@/types'
-import { isMockDb } from './mock-mode'
-import { createMockClient } from './mock/client'
-import { getFileStore } from './mock/persist'
+import { isMockDb, assertRealConfig } from './mock-mode'
+import { createFileMockClient } from './mock/persist'
 
 export async function createServerClient_() {
-  if (isMockDb()) return createMockClient(getFileStore()) as any
+  if (isMockDb()) return createFileMockClient() as any
+  assertRealConfig(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
   const cookieStore = await cookies()
 
   return createServerClient<Database>(
@@ -32,7 +32,8 @@ export async function createServerClient_() {
 }
 
 export async function createServerClientServiceRole() {
-  if (isMockDb()) return createMockClient(getFileStore()) as any
+  if (isMockDb()) return createFileMockClient() as any
+  assertRealConfig(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
   const cookieStore = await cookies()
 
   return createServerClient<Database>(

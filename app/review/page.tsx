@@ -1,26 +1,36 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createServerClient_ } from '@/lib/supabase/server'
+import { BackButton } from '@/components/shared/BackButton'
 
 export default async function ReviewPage() {
   const supabase = await createServerClient_()
 
   // Dev mode: skip auth
 
-  // Fetch due questions
+  // Fetch due questions, then resolve subtopic/topic names separately (the mock
+  // DB doesn't support nested relational selects). Exclude flashcards and
+  // AI-unanswerable questions — they aren't quizzable.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: dueQuestions } = await (supabase
+  const { data: rawDue } = await (supabase
     .from('questions')
-    .select(
-      `
-    *,
-    subtopic:subtopics(
-      name,
-      topic:topics(name)
-    )
-  `
-    )
+    .select('*')
     .lte('next_review_at', new Date().toISOString())) as any
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: allSubtopics } = await (supabase.from('subtopics').select('*')) as any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: allTopics } = await (supabase.from('topics').select('*')) as any
+  const subById = new Map((allSubtopics || []).map((s: any) => [s.id, s]))
+  const topicById = new Map((allTopics || []).map((t: any) => [t.id, t]))
+
+  const dueQuestions = ((rawDue || []) as any[])
+    .filter((q) => q.question_type !== 'flashcard' && q.answer_status !== 'unanswerable')
+    .map((q) => {
+      const sub: any = subById.get(q.subtopic_id)
+      const topic: any = sub ? topicById.get(sub.topic_id) : undefined
+      return { ...q, subtopic: { name: sub?.name ?? 'Unknown', topic: { name: topic?.name ?? '' } } }
+    })
 
   if (!dueQuestions || dueQuestions.length === 0) {
     return (
@@ -45,6 +55,7 @@ export default async function ReviewPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
+      <BackButton href="/dashboard" label="Dashboard" />
       <h1 className="text-3xl font-bold text-slate-900 mb-2">Review Queue</h1>
       <p className="text-slate-600 mb-6">{dueQuestions.length} questions due for review</p>
 
@@ -64,7 +75,7 @@ export default async function ReviewPage() {
               </div>
 
               <Link
-                href={`/quiz/${subtopicId}`}
+                href={`/quiz/${subtopicId}?due=1`}
                 className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
               >
                 Start Review

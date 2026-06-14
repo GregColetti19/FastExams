@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Question } from '@/types'
 import { FlashCard } from './FlashCard'
@@ -18,10 +18,15 @@ export function FlashcardEngine({ subtopicId }: FlashcardEngineProps) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, boolean>>({})
   const [error, setError] = useState('')
-  const supabase = createClient()
+  // Stable client + run-once guard (a new client each render re-fired the init
+  // effect, inserting a study_session per render).
+  const supabase = useMemo(() => createClient(), [])
+  const initedRef = useRef(false)
 
-  // Initialize session and fetch flashcards
+  // Initialize session and fetch flashcards (once).
   useEffect(() => {
+    if (initedRef.current) return
+    initedRef.current = true
     const initializeFlashcards = async () => {
       try {
         // Create study session
@@ -61,7 +66,8 @@ export function FlashcardEngine({ subtopicId }: FlashcardEngineProps) {
     }
 
     initializeFlashcards()
-  }, [subtopicId, supabase])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleAnswer = async (isCorrect: boolean) => {
     const currentCard = flashcards[currentIndex]

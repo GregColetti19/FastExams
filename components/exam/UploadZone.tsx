@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { FileRole, ProcessingStatus } from '@/types'
 
@@ -9,10 +10,12 @@ interface UploadZoneProps {
 }
 
 export function UploadZone({ examId }: UploadZoneProps) {
+  const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragActive, setDragActive] = useState(false)
   const [fileRole, setFileRole] = useState<FileRole>('theory')
   const [uploading, setUploading] = useState(false)
+  const [generating, setGenerating] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [files, setFiles] = useState<Array<{ id: string; name: string; status: ProcessingStatus; error?: string }>>([])
@@ -40,14 +43,49 @@ export function UploadZone({ examId }: UploadZoneProps) {
 
       setFiles(updatedFiles)
 
-      // Stop polling if all files are done/error
-      if (updatedFiles.every((f) => f.status === 'done' || f.status === 'error')) {
+      // 'ready' (converted, awaiting generation) is a settle point — stop
+      // polling and let the user trigger generation. After generation, files
+      // reach 'done'/'error'; then redirect to the populated exam dashboard.
+      const settled = updatedFiles.every(
+        (f) => f.status === 'ready' || f.status === 'done' || f.status === 'error'
+      )
+      if (settled) {
         setPollInterval(null)
+        const generated = updatedFiles.every((f) => f.status === 'done' || f.status === 'error')
+        if (generated && updatedFiles.some((f) => f.status === 'done')) {
+          router.push(`/exam/${examId}`)
+        }
       }
     }, 2000)
 
     return () => clearInterval(interval)
-  }, [pollInterval, files, supabase])
+  }, [pollInterval, files, supabase, router, examId])
+
+  const handleGenerate = async () => {
+    setGenerating(true)
+    setUploadError(null)
+    try {
+      const res = await fetch('/api/generate-exam', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ examId }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || `Generation failed (${res.status})`)
+      }
+      // Optimistically flip ready files to generating, then resume polling.
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.status === 'ready' ? { ...f, status: 'generating_questions' as ProcessingStatus } : f
+        )
+      )
+      setPollInterval(2000)
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : 'Generation failed')
+      setGenerating(false)
+    }
+  }
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault()
@@ -149,6 +187,13 @@ export function UploadZone({ examId }: UploadZoneProps) {
       setUploadProgress(0)
     }
   }
+
+  // Generation is gated until every upload has settled and at least one file is
+  // converted ('ready'). This lets the engine decide on the FULL set of files.
+  const allSettled = files.length > 0 && files.every((f) => f.status === 'ready' || f.status === 'error')
+  const someReady = files.some((f) => f.status === 'ready')
+  const showGenerate = allSettled && someReady && !generating
+  const isGenerating = generating || files.some((f) => f.status === 'generating_questions')
 
   return (
     <div className="space-y-6">
@@ -259,6 +304,7 @@ export function UploadZone({ examId }: UploadZoneProps) {
                   <p className="text-xs text-slate-600 mt-1">
                     {f.status === 'pending' && 'Waiting to process...'}
                     {f.status === 'processing' && 'Converting file...'}
+                    {f.status === 'ready' && '✓ Uploaded — ready to generate'}
                     {f.status === 'generating_questions' && 'Generating questions...'}
                     {f.status === 'done' && '✓ Complete'}
                     {f.status === 'error' && `✗ Error: ${f.error || 'Unknown error'}`}
@@ -267,6 +313,7 @@ export function UploadZone({ examId }: UploadZoneProps) {
                 <div>
                   {f.status === 'pending' && <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />}
                   {f.status === 'processing' && <div className="w-4 h-4 border-2 border-orange-600 border-t-transparent rounded-full animate-spin" />}
+                  {f.status === 'ready' && <span className="text-slate-400 font-bold">✓</span>}
                   {f.status === 'generating_questions' && <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />}
                   {f.status === 'done' && <span className="text-green-600 font-bold">✓</span>}
                   {f.status === 'error' && <span className="text-red-600 font-bold">✗</span>}
@@ -274,6 +321,29 @@ export function UploadZone({ examId }: UploadZoneProps) {
               </div>
             ))}
           </div>
+
+          {/* Generate step — gated until all uploads are converted. */}
+          {showGenerate && (
+            <div className="mt-6 pt-6 border-t border-slate-200">
+              <p className="text-sm text-slate-600 mb-3">
+                All files uploaded. Generate the quiz — past-exam questions are used as-is;
+                AI questions are generated from theory only when no past exams were uploaded.
+              </p>
+              <button
+                onClick={handleGenerate}
+                className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
+              >
+                Generate Quiz
+              </button>
+            </div>
+          )}
+
+          {isGenerating && (
+            <div className="mt-6 pt-6 border-t border-slate-200 flex items-center gap-3 text-sm text-slate-600">
+              <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
+              Generating questions… you’ll be taken to the exam when it’s ready.
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient_ } from '@/lib/supabase/server'
-import { extractTopics, buildOutlineFromChunks } from '@/lib/ai/extract-topics'
+import { extractTopicHierarchy, tiebreakSubtopic } from '@/lib/ai/extract-topics'
+import { assignChunksToSubtopics } from '@/lib/ai/assign-subtopics'
 import { generateQuestionsFromChunks } from '@/lib/ai/generate-questions'
 import { extractPastExamQuestions } from '@/lib/ai/extract-past-exam-questions'
 import { findBestChunkByEmbedding } from '@/lib/ai/match-to-theory'
@@ -19,6 +20,15 @@ const ANSWER_MIN_CONFIDENCE = 0.4
 function optionLetter(optionText: string): string {
   const m = optionText.match(/^\s*([A-Za-z])/)
   return m ? m[1].toUpperCase() : ''
+}
+
+/** Evenly spaced sample across an array so the tree sees the whole document. */
+function stratifiedSample<T>(items: T[], n: number): T[] {
+  if (items.length <= n) return items
+  const step = items.length / n
+  const out: T[] = []
+  for (let i = 0; i < n; i++) out.push(items[Math.floor(i * step)])
+  return out
 }
 
 /**
@@ -130,58 +140,113 @@ async function processTheoryFile(
   fileRole: string
 ) {
   try {
-    // Step 1: Extract topics from chunk headings
-    const outline = buildOutlineFromChunks(
-      chunks
-        .map((c) => c.candidate_subtopic)
-        .filter((h) => h && h.length > 0)
+    // Step 1: Build a content-grounded topic→subtopic tree. Real converter
+    // output drops headings, so infer the tree from a sample of actual content.
+    const hierarchy = await extractTopicHierarchy(
+      stratifiedSample(chunks.map((c) => c.content_text || ''), 12),
+      exam.language || 'en'
     )
 
-    const topicsResult = await extractTopics(outline, exam.language || 'en')
-
-    // Step 2: Create topic and subtopic records
-    const topicMap = new Map<string, string>() // subtopic name -> id
-
-    for (const topic of topicsResult.topics) {
+    // Step 2: Create topic + subtopic records; collect seeds (name+description+id).
+    const seeds: Array<{ topic: string; name: string; description: string; id: string }> = []
+    for (const topic of hierarchy.topics) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: topicRecord, error: topicInsertError } = await (supabase.from('topics') as any)
         .insert([{ exam_id: exam.id, name: topic.name }])
-        .select() as any
-
+        .select()
       if (topicInsertError) {
         throw new Error(`Failed to insert topic "${topic.name}": ${topicInsertError.message}`)
       }
-
-      if (!topicRecord?.[0]) continue
-
-      const topicId = topicRecord[0].id
-
-      for (const subtopicName of topic.subtopics) {
+      const topicId = topicRecord?.[0]?.id
+      if (!topicId) continue
+      for (const sub of topic.subtopics || []) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: subtopicRecord, error: subtopicInsertError } = await (supabase.from('subtopics') as any)
-          .insert([{ topic_id: topicId, name: subtopicName }])
-          .select() as any
-
-        if (subtopicInsertError) {
-          throw new Error(`Failed to insert subtopic "${subtopicName}": ${subtopicInsertError.message}`)
-        }
-
-        if (subtopicRecord?.[0]) {
-          topicMap.set(subtopicName, subtopicRecord[0].id)
+        const { data: subRecord, error: subErr } = await (supabase.from('subtopics') as any)
+          .insert([{ topic_id: topicId, name: sub.name }])
+          .select()
+        if (subErr) throw new Error(`Failed to insert subtopic "${sub.name}": ${subErr.message}`)
+        if (subRecord?.[0]) {
+          seeds.push({
+            topic: topic.name,
+            name: sub.name,
+            description: sub.description || sub.name,
+            id: subRecord[0].id,
+          })
         }
       }
     }
 
-    // Step 3: Assign chunks to subtopics and generate questions
+    // Step 3: Assign chunks to subtopics via seeded embedding refinement.
+    // Ensure chunk embeddings (stored at ingest, else compute now).
+    const needEmb = chunks.filter((c) => !Array.isArray(c.embedding) || c.embedding.length === 0)
+    if (needEmb.length > 0) {
+      try {
+        const vecs = await embedTexts(needEmb.map((c) => c.content_text || ''))
+        needEmb.forEach((c, i) => { c.embedding = vecs[i] })
+      } catch (e) {
+        console.error('Theory chunk embedding failed:', e)
+      }
+    }
+    const descVecs = seeds.length > 0 ? await embedTexts(seeds.map((s) => s.description)) : []
+    const subtopicSeeds = seeds.map((s, i) => ({ topic: s.topic, name: s.name, embedding: descVecs[i] }))
+    const chunkVecs = chunks
+      .filter((c) => Array.isArray(c.embedding) && c.embedding.length > 0)
+      .map((c) => ({ id: c.id, embedding: c.embedding as number[] }))
+
+    const assignments = assignChunksToSubtopics(chunkVecs, subtopicSeeds)
+
+    // Step 3b: LLM tie-break for the unconfident minority only (cost control).
+    const subtopicNames = seeds.map((s) => s.name)
+    for (const a of assignments) {
+      if (a.confident) continue
+      const chunk = chunks.find((c) => c.id === a.chunkId)
+      if (!chunk) continue
+      try {
+        const pick = await tiebreakSubtopic(chunk.content_text || '', subtopicNames, exam.language || 'en')
+        if (pick) {
+          a.subtopic = pick
+          a.topic = seeds.find((s) => s.name === pick)?.topic ?? a.topic
+          a.confident = true
+        }
+      } catch (e) {
+        console.error('Tiebreak failed for chunk', a.chunkId, e)
+      }
+    }
+
+    // Step 3c: persist chunk → subtopic and group chunks per subtopic.
+    const nameToId = new Map(seeds.map((s) => [s.name, s.id]))
+    const assignedMap = new Map<string, any[]>()
+    for (const a of assignments) {
+      if (!a.subtopic) continue
+      const subtopicId = nameToId.get(a.subtopic)
+      const chunk = chunks.find((c) => c.id === a.chunkId)
+      if (!subtopicId || !chunk) continue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase.from('chunks') as any).update({ subtopic_id: subtopicId }).eq('id', a.chunkId)
+      if (!assignedMap.has(subtopicId)) assignedMap.set(subtopicId, [])
+      assignedMap.get(subtopicId)!.push(chunk)
+    }
+
+    // Skip AI question generation when the exam already has real past-exam
+    // questions — those are authoritative and we keep them instead. Theory is
+    // still parsed into the topic/subtopic tree above, which is needed to
+    // ground past-exam answers and to structure study. Users can generate AI
+    // questions on demand later via the "Create Questions" button (backlog).
+    const { data: pastExamFiles } = await (supabase.from('files') as any)
+      .select('id')
+      .eq('exam_id', exam.id)
+      .eq('file_role', 'past_exam')
+    const hasPastExams = (pastExamFiles || []).length > 0
+
+    // Step 4: Generate questions + flashcards per subtopic from its chunks.
     let questionsCreated = 0
     const subtopicErrors: string[] = []
 
-    for (const subtopicName of Array.from(topicMap.keys())) {
-      const subtopicId = topicMap.get(subtopicName)!
-      const subtopicChunks = chunks.filter(
-        (c) => c.candidate_subtopic === subtopicName || (c.candidate_topic?.includes(subtopicName))
-      )
-
+    for (const seed of seeds) {
+      if (hasPastExams) break // real questions exist — don't AI-generate
+      const subtopicId = seed.id
+      const subtopicName = seed.name
+      const subtopicChunks = assignedMap.get(subtopicId) || []
       if (subtopicChunks.length === 0) continue
 
       try {
@@ -192,7 +257,7 @@ async function processTheoryFile(
             hasImage: c.has_image,
             imagePath: c.image_storage_path,
           })),
-          Array.from(topicMap.keys())[0], // topic name
+          seed.topic,
           subtopicName,
           exam.language || 'en'
         )
@@ -245,7 +310,7 @@ async function processTheoryFile(
         // Generate flashcards
         const flashcards = await generateFlashcardsFromChunks(
           subtopicChunks.map((c) => ({ text: c.content_text })),
-          Array.from(topicMap.keys())[0],
+          seed.topic,
           subtopicName,
           exam.language || 'en'
         )
@@ -294,8 +359,9 @@ async function processTheoryFile(
         success: true,
         fileId,
         fileRole,
-        topicsCreated: topicMap.size,
+        subtopicsCreated: seeds.length,
         questionsCreated,
+        generationSkipped: hasPastExams,
         subtopicErrors: subtopicErrors.length > 0 ? subtopicErrors : undefined,
       },
       { status: 200 }

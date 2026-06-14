@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Question, QuestionOption } from '@/types'
+import { advanceQueue, isSessionComplete, QueueState } from '@/lib/scheduling/session-queue'
 import { QuizCard } from './QuizCard'
 import { SessionSummary } from './SessionSummary'
 
@@ -19,13 +20,21 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
   const [sessionId, setSessionId] = useState<string>('')
   const [questions, setQuestions] = useState<Question[]>([])
   const [options, setOptions] = useState<Record<string, QuestionOption[]>>({})
-  const [currentIndex, setCurrentIndex] = useState(0)
+  // Queue-driven so wrong answers can be reproposed within the session.
+  const [queueState, setQueueState] = useState<QueueState>({ queue: [], requeued: {} })
+  const [lastCorrect, setLastCorrect] = useState(false)
+  const [step, setStep] = useState(0) // forces QuizCard remount when a question reappears
   const [answers, setAnswers] = useState<Record<string, { isCorrect: boolean; timeSpent: number }>>({})
   const [error, setError] = useState('')
-  const supabase = createClient()
+  // Stable client + run-once guard: a fresh createClient() each render made the
+  // init effect re-fire on every render, inserting a study_session each time.
+  const supabase = useMemo(() => createClient(), [])
+  const initedRef = useRef(false)
 
-  // Initialize session and fetch questions
+  // Initialize session and fetch questions (once).
   useEffect(() => {
+    if (initedRef.current) return
+    initedRef.current = true
     const initializeQuiz = async () => {
       try {
         // Create study session
@@ -56,6 +65,7 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
         if (!questionsData) throw new Error('No questions found')
 
         setQuestions(questionsData)
+        setQueueState({ queue: questionsData.map((q: any) => q.id), requeued: {} })
 
         // Fetch options for all questions
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -87,10 +97,12 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
     }
 
     initializeQuiz()
-  }, [subtopicId, questionIds, supabase])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleAnswer = async (selectedOptionId: string, isCorrect: boolean, timeSpent: number) => {
-    const currentQuestion = questions[currentIndex]
+    const currentId = queueState.queue[0]
+    setLastCorrect(isCorrect)
 
     try {
       const response = await fetch('/api/record-attempt', {
@@ -98,7 +110,7 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId,
-          questionId: currentQuestion.id,
+          questionId: currentId,
           selectedOptionId,
           isCorrect,
           timeSpentSeconds: timeSpent,
@@ -109,9 +121,10 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
         throw new Error('Failed to record attempt')
       }
 
+      // Keep the latest result per question (a reproposed one may flip to correct).
       setAnswers({
         ...answers,
-        [currentQuestion.id]: { isCorrect, timeSpent },
+        [currentId]: { isCorrect, timeSpent },
       })
     } catch (err) {
       console.error('Error recording attempt:', err)
@@ -119,11 +132,12 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
   }
 
   const handleContinue = () => {
-    if (currentIndex < questions.length - 1) {
-      setCurrentIndex(currentIndex + 1)
-    } else {
-      // Quiz complete
+    const next = advanceQueue(queueState, lastCorrect)
+    if (isSessionComplete(next)) {
       setState('completed')
+    } else {
+      setQueueState(next)
+      setStep((s) => s + 1) // remount QuizCard for the next (or reproposed) question
     }
   }
 
@@ -155,8 +169,17 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
     return <div className="text-center py-8 text-slate-600">No questions available.</div>
   }
 
-  const currentQuestion = questions[currentIndex]
+  const currentId = queueState.queue[0]
+  const currentQuestion = questions.find((q) => q.id === currentId)
+  if (!currentQuestion) {
+    return <div className="text-center py-8 text-slate-600">No questions available.</div>
+  }
   const currentOptions = options[currentQuestion.id] || []
+
+  const total = questions.length
+  const remaining = new Set(queueState.queue).size
+  const resolved = total - remaining
+  const isRepropose = (queueState.requeued[currentId] ?? 0) > 0
 
   return (
     <div className="space-y-6">
@@ -164,20 +187,24 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
       <div className="bg-white rounded-lg shadow p-4">
         <div className="flex justify-between items-center mb-2">
           <span className="text-sm font-medium text-slate-700">
-            Question {currentIndex + 1} of {questions.length}
+            {resolved} of {total} done
+            {isRepropose && (
+              <span className="ml-2 text-amber-600">↻ retry</span>
+            )}
           </span>
           <span className="text-sm text-slate-600">{topicName}</span>
         </div>
         <div className="w-full bg-slate-200 rounded-full h-2">
           <div
             className="bg-blue-600 h-2 rounded-full transition-all"
-            style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}
+            style={{ width: `${(resolved / total) * 100}%` }}
           />
         </div>
       </div>
 
-      {/* Question Card */}
+      {/* Question Card — keyed so a reproposed question remounts fresh */}
       <QuizCard
+        key={`${currentQuestion.id}-${step}`}
         question={currentQuestion}
         options={currentOptions}
         onAnswer={handleAnswer}

@@ -7,7 +7,7 @@ import { embedTexts } from '@/lib/ai/embeddings'
 
 export async function POST(request: NextRequest) {
   try {
-    const { fileId, fileRole } = await request.json()
+    const { fileId } = await request.json()
 
     if (!fileId) {
       return NextResponse.json({ error: 'fileId required', code: 'MISSING_FILE_ID' }, { status: 400 })
@@ -89,35 +89,14 @@ export async function POST(request: NextRequest) {
           .eq('id', file.exam_id)
       }
 
-      // Update file status to generating_questions (before triggering async work)
+      // Conversion done. Mark the file 'ready' (converted, chunked, embedded)
+      // but do NOT generate questions here. Generation is an exam-level step the
+      // user triggers AFTER uploading all files, so the engine decides on the
+      // full set (presence/absence of past exams). See /api/generate-exam.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (supabase.from('files') as any)
-        .update({ processing_status: 'generating_questions' })
+        .update({ processing_status: 'ready' })
         .eq('id', fileId)
-
-      // Trigger question generation
-      const generateUrl = `${request.nextUrl.origin}/api/generate-questions`
-      setImmediate(() => {
-        fetch(generateUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileId, fileRole }),
-        }).catch(async (error) => {
-          console.error('Failed to trigger question generation:', error)
-          // Write failure back to DB so client can see it
-          try {
-            const supabaseInner = await createServerClient_()
-            await (supabaseInner.from('files') as any)
-              .update({
-                processing_status: 'error',
-                processing_error: `Question generation trigger failed: ${error instanceof Error ? error.message : String(error)}`,
-              })
-              .eq('id', fileId)
-          } catch (dbError) {
-            console.error(`Failed to update file status for ${fileId}:`, dbError)
-          }
-        })
-      })
 
       return NextResponse.json(
         {
@@ -126,7 +105,7 @@ export async function POST(request: NextRequest) {
           chunksCreated: chunks.length,
           language: langResult.code,
           converterUsed: convertResult.converter_used,
-          processingStatus: 'generating_questions',
+          processingStatus: 'ready',
         },
         { status: 200 }
       )

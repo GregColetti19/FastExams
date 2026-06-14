@@ -7,7 +7,9 @@ import { randomUUID } from 'node:crypto'
 
 const DB_PATH = process.env.DEV_DB_PATH || '.dev-data/db.json'
 const now = () => new Date().toISOString()
-const DEV_USER_ID = '00000000-0000-0000-0000-000000000000'
+// Matches the mock user id used by the dashboard / NewExamDialog / upload, so
+// the seeded demo exam shows up on the dashboard.
+const DEV_USER_ID = '6a7223fc-a96d-434a-9125-98ba6e4daca3'
 
 const examId = randomUUID()
 const topicId = randomUUID()

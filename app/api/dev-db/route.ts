@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getFileStore } from '@/lib/supabase/mock/persist'
-import { executeQuery, executeStorage } from '@/lib/supabase/mock/query'
+import { executeQuery } from '@/lib/supabase/mock/query'
+import { executeFileStorage } from '@/lib/supabase/mock/file-storage'
 import { isMockDb } from '@/lib/supabase/mock-mode'
 
 // Shared mock-DB endpoint for the browser client. Only active in DB_MODE=mock;
@@ -17,7 +18,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(executeQuery(store, body.spec))
   }
   if (body.type === 'storage') {
-    return NextResponse.json(executeStorage(store, body.spec))
+    return NextResponse.json(executeFileStorage(body.spec))
   }
   return NextResponse.json({ data: null, error: { message: 'unknown op' } }, { status: 400 })
 }

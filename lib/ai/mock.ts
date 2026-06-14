@@ -70,6 +70,36 @@ export function mockMessagesCreate(params: any): Promise<Msg> {
   const topic = grab(text, /Topic:\s*(.+)/, 'Mock Topic')
   const subtopic = grab(text, /Subtopic:\s*(.+)/, 'Mock Subtopic')
 
+  // Content-grounded topic hierarchy (subtopics carry descriptions).
+  if (system.includes('read excerpts')) {
+    return Promise.resolve(
+      reply({
+        topics: [
+          {
+            name: 'Cardiovascular System',
+            subtopics: [
+              { name: 'Heart Valves', description: 'Mitral, aortic, tricuspid valves; atrium and ventricle blood flow.' },
+              { name: 'Cardiac Cycle', description: 'Systole, diastole, preload and afterload.' },
+            ],
+          },
+          {
+            name: 'Respiratory System',
+            subtopics: [
+              { name: 'Lung Mechanics', description: 'Alveoli, gas exchange, ventilation and compliance.' },
+            ],
+          },
+        ],
+      })
+    )
+  }
+
+  // Subtopic tie-break: pick the first listed candidate.
+  if (system.includes('categorize a study-material excerpt')) {
+    const m = text.match(/Subtopics:\n((?:- .+\n?)+)/)
+    const first = m ? m[1].split('\n')[0].replace(/^-\s*/, '').trim() : 'none'
+    return Promise.resolve(reply({ subtopic: first }))
+  }
+
   // Topic extraction
   if (system.includes('curriculum analyzer')) {
     return Promise.resolve(

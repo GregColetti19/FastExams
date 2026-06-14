@@ -18,7 +18,8 @@ import { convertFile } from '@/lib/processing/converter-client'
 import { detectLanguage } from '@/lib/processing/language-detector'
 import { buildChunks, splitChunksByTokens } from '@/lib/processing/chunk-builder'
 import { embedTexts, cosineSimilarity } from '@/lib/ai/embeddings'
-import { extractTopics, buildOutlineFromChunks } from '@/lib/ai/extract-topics'
+import { extractTopicHierarchy } from '@/lib/ai/extract-topics'
+import { assignChunksToSubtopics } from '@/lib/ai/assign-subtopics'
 import { extractPastExamQuestions } from '@/lib/ai/extract-past-exam-questions'
 import { findBestChunkByEmbedding } from '@/lib/ai/match-to-theory'
 import { answerExamQuestion } from '@/lib/ai/answer-exam-question'
@@ -99,16 +100,40 @@ describe.skipIf(!process.env.SMOKE)('real integration', () => {
       })
       expect(theoryVecs[0]?.length).toBe(1536)
 
-      await stage('5', 'extract topics (Claude)', async () => {
-        const outline = buildOutlineFromChunks(
-          sampleChunks.map((c) => c.candidateSubtopic || '').filter(Boolean)
+      await stage('5', 'build tree + assign chunks (Claude + embeddings)', async () => {
+        // Stratified content sample → content-grounded tree with descriptions.
+        const step = sampleChunks.length / 12
+        const sample = Array.from({ length: Math.min(12, sampleChunks.length) }, (_, i) =>
+          sampleChunks[Math.floor(i * step)].text
         )
-        const topics = await extractTopics(outline || theoryMd.slice(0, 1500), theoryLang.code)
-        for (const t of topics.topics) {
-          log('5', `topic="${t.name}" subtopics=[${t.subtopics.join(', ')}]`)
+        const hierarchy = await extractTopicHierarchy(sample, theoryLang.code)
+        const flat = hierarchy.topics.flatMap((t) =>
+          (t.subtopics || []).map((s) => ({ topic: t.name, name: s.name, description: s.description }))
+        )
+        for (const t of hierarchy.topics) {
+          log('5', `topic="${t.name}" subtopics=[${(t.subtopics || []).map((s) => s.name).join(', ')}]`)
         }
-        expect(topics.topics.length).toBeGreaterThan(0)
-        return topics
+        expect(flat.length).toBeGreaterThan(0)
+
+        // Seed from descriptions, assign all chunks, report the distribution.
+        const descVecs = await embedTexts(flat.map((s) => s.description))
+        const subSeeds = flat.map((s, i) => ({ topic: s.topic, name: s.name, embedding: descVecs[i] }))
+        const chunkVecs = sampleChunks.map((_, i) => ({ id: String(i), embedding: theoryVecs[i] }))
+        const assignments = assignChunksToSubtopics(chunkVecs, subSeeds)
+
+        const dist = new Map<string, number>()
+        let unconfident = 0
+        for (const a of assignments) {
+          if (!a.confident) unconfident++
+          const k = a.subtopic || '(none)'
+          dist.set(k, (dist.get(k) || 0) + 1)
+        }
+        log('5', `assigned ${assignments.length} chunks; unconfident=${unconfident}`)
+        for (const [name, cnt] of [...dist.entries()].sort((a, b) => b[1] - a[1])) {
+          log('5', `  ${cnt} → ${name}`)
+        }
+        // Chunks should spread across subtopics, not collapse to one.
+        expect(dist.size).toBeGreaterThan(1)
       })
 
       // Grounding candidates: real embeddings + a per-chunk pseudo-subtopic.

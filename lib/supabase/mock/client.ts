@@ -24,7 +24,17 @@ class QueryBuilder implements PromiseLike<Result> {
     this.spec = { table, op: 'select', filters: [], single: false, wantSelect: false, limit: null }
   }
 
-  select(_cols?: string): this {
+  select(cols?: string): this {
+    // The mock store has no FK-join engine. A relational embed like
+    // "*, subtopic:subtopics(name)" would silently drop the nested data and
+    // surface later as `undefined.name`. Fail loud instead — fetch related
+    // rows in a separate query.
+    if (cols && /[A-Za-z_]+\s*\(/.test(cols)) {
+      throw new Error(
+        `[mock-db] nested relational select is not supported: "${cols}". ` +
+          'Fetch the related rows in a separate query (the mock DB has no join engine).'
+      )
+    }
     if (this.opSet) this.spec.wantSelect = true
     else this.spec.op = 'select'
     return this
@@ -117,9 +127,21 @@ export function makeClient(queryExec: QueryExecutor, storageExec: StorageExecuto
       return new QueryBuilder(name, queryExec)
     },
     storage: makeStorage(storageExec),
+    // Mock auth: there's always a single dev user. These stubs exist so the
+    // real UI (Navbar sign-out, login/signup forms) doesn't crash on missing
+    // methods — they don't enforce anything in mock mode.
     auth: {
-      async getUser(): Promise<Result> {
+      async getUser() {
         return { data: { user: DEV_USER }, error: null }
+      },
+      async signInWithPassword() {
+        return { data: { user: DEV_USER, session: {} }, error: null }
+      },
+      async signUp() {
+        return { data: { user: DEV_USER, session: {} }, error: null }
+      },
+      async signOut() {
+        return { error: null }
       },
     },
   }

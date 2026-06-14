@@ -1,7 +1,9 @@
 // Shared TypeScript types for FastExams
 
 export type FileRole = 'theory' | 'past_exam';
-export type ProcessingStatus = 'pending' | 'processing' | 'generating_questions' | 'done' | 'error';
+// 'ready' = converted + chunked + embedded, awaiting the user-triggered
+// exam-level generation step (/api/generate-exam).
+export type ProcessingStatus = 'pending' | 'processing' | 'ready' | 'generating_questions' | 'done' | 'error';
 export type QuestionSource = 'ai_generated' | 'past_exam';
 export type QuestionType = 'mcq' | 'true_false' | 'fill_blank' | 'flashcard';
 

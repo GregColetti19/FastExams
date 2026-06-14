@@ -91,16 +91,19 @@ export async function POST(request: NextRequest) {
         .eq('id', sessionId)
     }
 
-    // If question has a subtopic, recalculate mastery score
+    // Recalculate subtopic mastery across ALL its questions (not just this one).
+    // Uses the per-question times_seen/times_correct counters, which were just
+    // updated above for this question.
     if (question.subtopic_id) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: allAttempts } = await (supabase.from('question_attempts') as any)
-        .select('is_correct')
-        .eq('question_id', questionId) as any
+      const { data: subtopicQuestions } = await (supabase.from('questions') as any)
+        .select('times_seen, times_correct')
+        .eq('subtopic_id', question.subtopic_id) as any
 
-      if (allAttempts) {
-        const correctCount = allAttempts.filter((a: any) => a.is_correct).length
-        const masteryScore = getMasteryScore(correctCount, allAttempts.length)
+      if (subtopicQuestions && subtopicQuestions.length > 0) {
+        const totalSeen = subtopicQuestions.reduce((s: number, q: any) => s + (q.times_seen || 0), 0)
+        const totalCorrect = subtopicQuestions.reduce((s: number, q: any) => s + (q.times_correct || 0), 0)
+        const masteryScore = getMasteryScore(totalCorrect, totalSeen)
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (supabase.from('subtopics') as any)

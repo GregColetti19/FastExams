@@ -28,6 +28,63 @@ Respond with this exact JSON structure:
 }`,
   }),
 
+  // Build the topic→subtopic tree from actual content samples (not headings,
+  // which real converters often drop). Each subtopic carries a description that
+  // is embedded to seed chunk assignment.
+  topicHierarchyFromContent: (params: {
+    subject: string
+    language: string
+    samples: string
+  }) => ({
+    system: `You are an expert academic curriculum analyzer. You read excerpts of study material and infer the topic hierarchy actually present in them.
+Always respond with valid JSON only. No preamble, no markdown fences.`,
+    user: `Below are representative excerpts from a university ${params.subject} study document.
+The document language is: ${params.language}
+
+Infer the 2-level hierarchy of Topic → Subtopic that these excerpts actually cover. Do NOT invent themes that are not present in the excerpts.
+- Topics = broad themes (e.g. "Neonatology")
+- Subtopics = specific, teachable units (e.g. "Neonatal Jaundice")
+- Aim for 3–8 subtopics per topic
+- For each subtopic, write a 1–2 sentence description in ${params.language} that captures its key concepts and terms (this is used to match content to it)
+- Use the same language as the document
+
+Excerpts:
+${params.samples}
+
+Respond with this exact JSON structure:
+{
+  "topics": [
+    {
+      "name": "Topic Name",
+      "subtopics": [
+        { "name": "Subtopic Name", "description": "What this subtopic covers, with key terms." }
+      ]
+    }
+  ]
+}`,
+  }),
+
+  // Tie-break: pick the best subtopic for a chunk the embedding step left
+  // unconfident. Used only on the uncertain minority (cost control).
+  subtopicTiebreak: (params: {
+    language: string
+    chunk_text: string
+    candidates: string[]
+  }) => ({
+    system: `You categorize a study-material excerpt into exactly one subtopic.
+Always respond with valid JSON only. No preamble, no markdown fences.`,
+    user: `Document language: ${params.language}
+Which ONE of these subtopics best fits the excerpt? If none fit, answer "none".
+
+Subtopics:
+${params.candidates.map((c) => `- ${c}`).join('\n')}
+
+Excerpt:
+${params.chunk_text}
+
+Respond with: { "subtopic": "exact subtopic name or none" }`,
+  }),
+
   questionGenerationText: (params: {
     n: number
     language: string

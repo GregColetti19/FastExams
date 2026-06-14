@@ -4,6 +4,8 @@
 // instance (getMockStore) lets API routes and tests see the same data, so the
 // upload → process → generate → record pipeline runs fully offline, no cloud.
 
+import { bytesToB64, b64ToBytes } from './base64'
+
 export type Row = Record<string, any>
 
 export const DEV_USER = {
@@ -45,9 +47,22 @@ export class MockStore {
     for (const [name, rows] of Object.entries(data)) this.tables.set(name, rows)
   }
 
-  /** Serialize table data to a plain object (file save). Storage excluded. */
+  /** Serialize table data to a plain object (file save). */
   dumpTables(): Record<string, Row[]> {
     return Object.fromEntries(this.tables)
+  }
+
+  /** Serialize uploaded bytes as base64 so they persist across requests. */
+  dumpStorage(): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const [k, v] of this.storage) out[k] = bytesToB64(v)
+    return out
+  }
+
+  /** Restore uploaded bytes from a base64 map (file load). */
+  loadStorage(data: Record<string, string>): void {
+    this.storage.clear()
+    for (const [k, v] of Object.entries(data)) this.storage.set(k, b64ToBytes(v))
   }
 
   table(name: string): Row[] {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createMockClient } from '@/lib/supabase/mock/client'
-import { getMockStore, resetMockStore, DEV_USER } from '@/lib/supabase/mock/store'
+import { getMockStore, resetMockStore, DEV_USER, MockStore } from '@/lib/supabase/mock/store'
 
 const db = () => createMockClient(getMockStore())
 
@@ -110,6 +110,19 @@ describe('mock client: order + limit + lte', () => {
   })
 })
 
+describe('mock client: nested select guard', () => {
+  it('throws a clear error on a relational embed instead of silently dropping it', () => {
+    expect(() =>
+      db().from('subtopics').select('*, topic:topics(name)')
+    ).toThrowError(/nested relational select/i)
+  })
+
+  it('allows flat selects (including column lists)', () => {
+    expect(() => db().from('questions').select('times_seen, times_correct')).not.toThrow()
+    expect(() => db().from('questions').select('*')).not.toThrow()
+  })
+})
+
 describe('mock storage + auth', () => {
   it('upload then download round-trips bytes', async () => {
     const sb = db()
@@ -131,5 +144,15 @@ describe('mock storage + auth', () => {
   it('auth.getUser returns the dev user', async () => {
     const { data } = await db().auth.getUser()
     expect(data.user.id).toBe(DEV_USER.id)
+  })
+
+  // Storage must survive serialization so upload (one route) and process-file
+  // (another route, separate store instance) share bytes via the persisted file.
+  it('dumpStorage/loadStorage round-trips uploaded bytes', () => {
+    const a = new MockStore()
+    a.storage.set('uploads/e1/file.pdf', new TextEncoder().encode('pdf-bytes'))
+    const b = new MockStore()
+    b.loadStorage(a.dumpStorage())
+    expect(new TextDecoder().decode(b.storage.get('uploads/e1/file.pdf')!)).toBe('pdf-bytes')
   })
 })

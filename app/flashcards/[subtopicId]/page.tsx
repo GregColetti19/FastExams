@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createServerClient_ } from '@/lib/supabase/server'
 import { FlashcardEngine } from '@/components/flashcards/FlashcardEngine'
+import { BackButton } from '@/components/shared/BackButton'
 
 export default async function FlashcardsPage({ params }: { params: { subtopicId: string } }) {
   const supabase = await createServerClient_()
@@ -21,6 +22,7 @@ export default async function FlashcardsPage({ params }: { params: { subtopicId:
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
+      <BackButton label="Back" />
       <h1 className="text-2xl font-bold text-slate-900 mb-6">Flashcards: {subtopic.name}</h1>
       <FlashcardEngine subtopicId={params.subtopicId} />
     </div>

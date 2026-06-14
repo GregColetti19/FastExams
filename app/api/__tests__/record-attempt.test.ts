@@ -79,4 +79,24 @@ describe('POST /api/record-attempt (mock DB)', () => {
     const res = await post({ sessionId: 'sess1', questionId: 'ghost', isCorrect: true })
     expect(res.status).toBe(404)
   })
+
+  it('aggregates subtopic mastery across all its questions', async () => {
+    const store = getMockStore()
+    store.seed('questions', [
+      {
+        id: 'q2',
+        subtopic_id: 's1',
+        question_text: 'Q2',
+        justification: 'J',
+        times_seen: 0,
+        times_correct: 0,
+        current_interval_days: 1,
+        last_seen_at: null,
+      },
+    ])
+    // q1 correct (1/1), q2 wrong (0/1) → subtopic = 1 correct / 2 seen = 50
+    await post({ sessionId: 'sess1', questionId: 'q1', isCorrect: true })
+    await post({ sessionId: 'sess1', questionId: 'q2', isCorrect: false })
+    expect(store.table('subtopics')[0].mastery_score).toBe(50)
+  })
 })

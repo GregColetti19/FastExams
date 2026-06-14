@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createServerClient_ } from '@/lib/supabase/server'
 import { TopicGrid } from '@/components/exam/TopicGrid'
+import { BackButton } from '@/components/shared/BackButton'
 
 export default async function ExamPage({ params }: { params: { examId: string } }) {
   const supabase = await createServerClient_()
@@ -18,18 +19,30 @@ export default async function ExamPage({ params }: { params: { examId: string } 
     redirect('/dashboard')
   }
 
+  // Fetch topics, then their subtopics separately and attach (the mock DB has
+  // no FK-join engine; this shape also works against real Supabase).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: topics } = (await supabase
+  const { data: rawTopics } = (await supabase
     .from('topics')
-    .select(`
-      *,
-      subtopics (*)
-    `)
+    .select('*')
     .eq('exam_id', params.examId)
     .order('display_order')) as any
 
+  const topicIds = (rawTopics || []).map((t: any) => t.id)
+  let subtopics: any[] = []
+  if (topicIds.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = (await supabase.from('subtopics').select('*').in('topic_id', topicIds)) as any
+    subtopics = data || []
+  }
+  const topics = (rawTopics || []).map((t: any) => ({
+    ...t,
+    subtopics: subtopics.filter((s) => s.topic_id === t.id),
+  }))
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <BackButton href="/dashboard" label="Dashboard" />
       <div className="flex justify-between items-start mb-8">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">{exam.name}</h1>
