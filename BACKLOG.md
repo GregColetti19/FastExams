@@ -66,6 +66,19 @@ Reconciled the built ingestion flow against the target UX spec. Decisions made:
   `done`/`error`, ≥1 `done`), `UploadZone` routes to `/exam/[examId]` (populated
   dashboard). `ready` is a settle point that stops polling and shows the
   Generate button without redirecting.
+- [x] ✅ **"Stuck on Generate" fix (past-exam exam).** When an exam has past
+  exams, `processTheoryFile` skips question generation but used to STILL run the
+  LLM tie-break (one call per unconfident chunk → ~270 sequential calls on a
+  large doc → 5–10 min spinner = "stuck"). The tie-break only refines labels for
+  generated questions; past-exam grounding ranks by embedding and tolerates a
+  coarse assignment. Now `hasPastExams` is computed before Step 3b and the
+  tie-break loop is skipped when generation is skipped.
+- [ ] 🟠 **Orphaned `generating_questions` has no recovery.** If the server
+  restarts or a generation request dies mid-run, the file sticks at
+  `generating_questions` with no error and `UploadZone` polls forever (no
+  timeout). Real fix needs a job queue / heartbeat; interim option: a client
+  poll timeout that surfaces "generation stalled — retry". Tied to the
+  fire-and-forget limitation already listed above.
 - [ ] 🟠 **"Create Questions" button (on-demand AI generation).** User can add
   new material to an already-created exam folder and explicitly trigger AI
   question generation via a button. Needed because auto-gen is now skipped when

@@ -195,21 +195,37 @@ async function processTheoryFile(
 
     const assignments = assignChunksToSubtopics(chunkVecs, subtopicSeeds)
 
+    // Decide early whether this exam has real past-exam questions. If so, we
+    // KEEP those and skip AI question generation — and we also skip the LLM
+    // tie-break below, because that refinement only sharpens subtopic labels for
+    // generated questions. Past-exam grounding ranks by embedding similarity and
+    // only needs a coarse chunk→subtopic assignment, which we already have. This
+    // avoids hundreds of sequential LLM calls (the cause of the "stuck" hang
+    // when generating an exam that has past exams).
+    const { data: pastExamFiles } = await (supabase.from('files') as any)
+      .select('id')
+      .eq('exam_id', exam.id)
+      .eq('file_role', 'past_exam')
+    const hasPastExams = (pastExamFiles || []).length > 0
+
     // Step 3b: LLM tie-break for the unconfident minority only (cost control).
-    const subtopicNames = seeds.map((s) => s.name)
-    for (const a of assignments) {
-      if (a.confident) continue
-      const chunk = chunks.find((c) => c.id === a.chunkId)
-      if (!chunk) continue
-      try {
-        const pick = await tiebreakSubtopic(chunk.content_text || '', subtopicNames, exam.language || 'en')
-        if (pick) {
-          a.subtopic = pick
-          a.topic = seeds.find((s) => s.name === pick)?.topic ?? a.topic
-          a.confident = true
+    // Skipped entirely when generation is skipped (see above).
+    if (!hasPastExams) {
+      const subtopicNames = seeds.map((s) => s.name)
+      for (const a of assignments) {
+        if (a.confident) continue
+        const chunk = chunks.find((c) => c.id === a.chunkId)
+        if (!chunk) continue
+        try {
+          const pick = await tiebreakSubtopic(chunk.content_text || '', subtopicNames, exam.language || 'en')
+          if (pick) {
+            a.subtopic = pick
+            a.topic = seeds.find((s) => s.name === pick)?.topic ?? a.topic
+            a.confident = true
+          }
+        } catch (e) {
+          console.error('Tiebreak failed for chunk', a.chunkId, e)
         }
-      } catch (e) {
-        console.error('Tiebreak failed for chunk', a.chunkId, e)
       }
     }
 
@@ -227,18 +243,9 @@ async function processTheoryFile(
       assignedMap.get(subtopicId)!.push(chunk)
     }
 
-    // Skip AI question generation when the exam already has real past-exam
-    // questions — those are authoritative and we keep them instead. Theory is
-    // still parsed into the topic/subtopic tree above, which is needed to
-    // ground past-exam answers and to structure study. Users can generate AI
-    // questions on demand later via the "Create Questions" button (backlog).
-    const { data: pastExamFiles } = await (supabase.from('files') as any)
-      .select('id')
-      .eq('exam_id', exam.id)
-      .eq('file_role', 'past_exam')
-    const hasPastExams = (pastExamFiles || []).length > 0
-
     // Step 4: Generate questions + flashcards per subtopic from its chunks.
+    // Skipped when the exam has past exams (see hasPastExams above) — their real
+    // questions are authoritative and AI generation would just add noise.
     let questionsCreated = 0
     const subtopicErrors: string[] = []
 
