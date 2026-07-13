@@ -2,41 +2,23 @@
 
 import { useState } from 'react'
 
+
 interface FlashCardProps {
   front: string
   back: string
-  onGotIt: () => Promise<void>
-  onMissedIt: () => Promise<void>
+  onGotIt: () => void
+  onMissedIt: () => void
 }
 
 export function FlashCard({ front, back, onGotIt, onMissedIt }: FlashCardProps) {
   const [flipped, setFlipped] = useState(false)
-  const [loading, setLoading] = useState(false)
-
-  const handleGotIt = async () => {
-    setLoading(true)
-    try {
-      await onGotIt()
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleMissedIt = async () => {
-    setLoading(true)
-    try {
-      await onMissedIt()
-    } finally {
-      setLoading(false)
-    }
-  }
 
   return (
     <div className="space-y-6">
       {/* Card */}
       <div
         className="h-64 cursor-pointer perspective"
-        onClick={() => !loading && setFlipped(!flipped)}
+        onClick={() => setFlipped(!flipped)}
         style={{
           perspective: '1000px',
         }}
@@ -78,20 +60,18 @@ export function FlashCard({ front, back, onGotIt, onMissedIt }: FlashCardProps) 
         </div>
       </div>
 
-      {/* Buttons - only show after flipped */}
+      {/* Buttons — only show after flipped */}
       {flipped && (
         <div className="flex gap-3">
           <button
-            onClick={handleGotIt}
-            disabled={loading}
-            className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
+            onClick={onGotIt}
+            className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
           >
             ✓ Got it
           </button>
           <button
-            onClick={handleMissedIt}
-            disabled={loading}
-            className="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 font-medium"
+            onClick={onMissedIt}
+            className="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
           >
             ✗ Missed it
           </button>

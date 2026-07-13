@@ -4,8 +4,8 @@ import { extractTopicHierarchy, tiebreakSubtopic } from '@/lib/ai/extract-topics
 import { assignChunksToSubtopics } from '@/lib/ai/assign-subtopics'
 import { generateQuestionsFromChunks } from '@/lib/ai/generate-questions'
 import { extractPastExamQuestions } from '@/lib/ai/extract-past-exam-questions'
-import { findBestChunkByEmbedding } from '@/lib/ai/match-to-theory'
-import { embedTexts } from '@/lib/ai/embeddings'
+import { findBestChunkByEmbedding, matchChunkForQuestion } from '@/lib/ai/match-to-theory'
+import { embedTexts, isEmbedMockEnabled } from '@/lib/ai/embeddings'
 import { answerExamQuestion } from '@/lib/ai/answer-exam-question'
 import { generateFlashcardsFromChunks } from '@/lib/ai/generate-flashcards'
 
@@ -409,47 +409,49 @@ async function processPastExamFile(
     // Extract the questions (options preserved; answer key usually absent)
     const examResult = await extractPastExamQuestions(markdown, exam.language || 'en')
 
-    // Grounding source = THEORY chunks for this exam (assigned to subtopics by
-    // the theory pipeline). Past exams carry no answer key, so we infer the
-    // answer from theory and cite it — never from the exam's own text.
-    const { data: theoryFiles } = await (supabase.from('files') as any)
-      .select('id')
-      .eq('exam_id', exam.id)
-      .eq('file_role', 'theory')
-    const theoryFileIds = (theoryFiles || []).map((f: any) => f.id)
-
-    let theoryChunks: any[] = []
-    if (theoryFileIds.length > 0) {
-      const { data } = await (supabase.from('chunks') as any)
-        .select('*')
-        .in('file_id', theoryFileIds)
-      theoryChunks = (data || []).filter((c: any) => c.subtopic_id)
-    }
-    // Embed theory chunks (use stored embedding, else compute on demand) so we
-    // rank by semantic similarity instead of keyword overlap.
-    const needEmbed = theoryChunks.filter(
-      (c) => !Array.isArray(c.embedding) || c.embedding.length === 0
-    )
-    if (needEmbed.length > 0) {
-      try {
-        const vecs = await embedTexts(needEmbed.map((c) => c.content_text || ''))
-        needEmbed.forEach((c, i) => {
-          c.embedding = vecs[i]
-        })
-      } catch (e) {
-        console.error('Theory chunk embedding failed:', e)
-      }
-    }
-    const embeddedCandidates = theoryChunks.map((c) => ({
-      id: c.id,
-      subtopicId: c.subtopic_id,
-      embedding: c.embedding,
-    }))
-
-    // Embed all MCQ question texts in one batch.
     const mcqs = examResult.questions.filter((q) => q.type === 'mcq')
+
+    // Real mode: pgvector RPC (migration 009) does indexed ANN search in Postgres.
+    // Mock mode: fetch all theory chunks + brute-force JS cosine (RPC unavailable).
+    const usePgVector = !isEmbedMockEnabled()
+
+    // Mock-only: load all theory chunks with embeddings upfront.
+    let theoryChunks: any[] = []
+    let embeddedCandidates: Array<{ id: string; subtopicId: string | null; embedding: number[] | null }> = []
+    if (!usePgVector) {
+      const { data: theoryFiles } = await (supabase.from('files') as any)
+        .select('id')
+        .eq('exam_id', exam.id)
+        .eq('file_role', 'theory')
+      const theoryFileIds = (theoryFiles || []).map((f: any) => f.id)
+      if (theoryFileIds.length > 0) {
+        const { data } = await (supabase.from('chunks') as any)
+          .select('*')
+          .in('file_id', theoryFileIds)
+        theoryChunks = (data || []).filter((c: any) => c.subtopic_id)
+      }
+      const needEmbed = theoryChunks.filter(
+        (c) => !Array.isArray(c.embedding) || c.embedding.length === 0
+      )
+      if (needEmbed.length > 0) {
+        try {
+          const vecs = await embedTexts(needEmbed.map((c) => c.content_text || ''))
+          needEmbed.forEach((c, i) => { c.embedding = vecs[i] })
+        } catch (e) {
+          console.error('Theory chunk embedding failed:', e)
+        }
+      }
+      embeddedCandidates = theoryChunks.map((c) => ({
+        id: c.id,
+        subtopicId: c.subtopic_id,
+        embedding: c.embedding,
+      }))
+    }
+
+    // Embed all MCQ question texts in one batch (both modes need question vectors).
     let qVectors: number[][] = []
-    if (mcqs.length > 0 && embeddedCandidates.length > 0) {
+    const canGround = usePgVector || embeddedCandidates.length > 0
+    if (mcqs.length > 0 && canGround) {
       try {
         qVectors = await embedTexts(mcqs.map((q) => q.question_text))
       } catch (e) {
@@ -458,7 +460,6 @@ async function processPastExamFile(
     }
 
     let unsortedSubtopicId: string | null = null
-
     let questionsCreated = 0
     let questionsFlagged = 0
     const questionErrors: string[] = []
@@ -467,30 +468,42 @@ async function processPastExamFile(
       const q = mcqs[qi]
 
       try {
-        // Rank theory chunks by cosine similarity to the question.
         const qVec = qVectors[qi]
-        const match =
-          qVec && embeddedCandidates.length > 0
-            ? findBestChunkByEmbedding(qVec, embeddedCandidates)
-            : { chunkId: '', subtopicId: null as string | null, score: 0 }
-        const grounded = match.score >= EMBED_MATCH_MIN_SCORE && !!match.subtopicId
-        const matchedChunk = grounded
-          ? theoryChunks.find((c) => c.id === match.chunkId)
-          : undefined
+
+        // Retrieve the best matching theory chunk.
+        let matchChunkId = ''
+        let matchSubtopicId: string | null = null
+        let matchScore = 0
+        let matchedContent = ''
+
+        if (qVec && usePgVector) {
+          const rpc = await matchChunkForQuestion(supabase, exam.id, qVec)
+          matchChunkId = rpc.chunkId
+          matchSubtopicId = rpc.subtopicId
+          matchScore = rpc.score
+          matchedContent = rpc.contentText
+        } else if (qVec && embeddedCandidates.length > 0) {
+          const bf = findBestChunkByEmbedding(qVec, embeddedCandidates)
+          matchChunkId = bf.chunkId
+          matchSubtopicId = bf.subtopicId
+          matchScore = bf.score
+          matchedContent = theoryChunks.find((c) => c.id === bf.chunkId)?.content_text || ''
+        }
+
+        const grounded = matchScore >= EMBED_MATCH_MIN_SCORE && !!matchSubtopicId
 
         // AI-answer from the matched theory (empty source => unanswerable).
         const answer = await answerExamQuestion(
           q.question_text,
           q.options || [],
-          matchedChunk?.content_text || '',
+          grounded ? matchedContent : '',
           exam.language || 'en'
         )
 
-        const isAnswered =
-          answer.answerable && answer.confidence >= ANSWER_MIN_CONFIDENCE
+        const isAnswered = answer.answerable && answer.confidence >= ANSWER_MIN_CONFIDENCE
 
         // Where to file it: matched subtopic, else a shared "Unsorted" bucket.
-        let subtopicId = grounded ? match.subtopicId : null
+        let subtopicId = grounded ? matchSubtopicId : null
         if (!subtopicId) {
           if (!unsortedSubtopicId) {
             unsortedSubtopicId = await ensureUnsortedSubtopic(supabase, exam.id)
@@ -507,8 +520,8 @@ async function processPastExamFile(
           .insert([
             {
               subtopic_id: subtopicId,
-              chunk_id: matchedChunk?.id ?? null,
-              matched_chunk_id: matchedChunk?.id ?? null,
+              chunk_id: matchChunkId || null,
+              matched_chunk_id: matchChunkId || null,
               question_text: q.question_text,
               justification: answer.justification || '',
               language: exam.language || 'en',
@@ -550,7 +563,12 @@ async function processPastExamFile(
         else questionsFlagged++
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error)
-        console.error(`Error processing past exam question:`, msg)
+        console.error(
+          `[${new Date().toISOString()}] Error processing past exam question[${qi}]:\n` +
+          `  question: ${q.question_text?.slice(0, 200)}\n` +
+          `  options: ${JSON.stringify(q.options?.slice(0, 4))}\n` +
+          `  error: ${msg}`
+        )
         questionErrors.push(msg)
       }
     }

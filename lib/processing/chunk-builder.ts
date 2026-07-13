@@ -6,10 +6,19 @@ import { ContentChunk } from '@/types'
  * (snake_case DB columns). Without this the insert dropped content_text,
  * candidate_subtopic, etc., breaking the theory pipeline downstream.
  */
+/** Strip characters PostgreSQL rejects: null bytes and lone surrogates. */
+function sanitizeText(text: string | null | undefined): string | null {
+  if (!text) return null
+  return text
+    .replace(/\x00/g, '')                          // null bytes
+    .replace(/[\uD800-\uDFFF]/g, '')               // lone surrogates
+    .replace(/\\u[0-9a-fA-F]{0,3}(?![0-9a-fA-F])/g, '') // incomplete \uXXXX escapes
+}
+
 export function toChunkRow(c: ContentChunk, embedding: number[] | null = null) {
   return {
     file_id: c.fileId,
-    content_text: c.text,
+    content_text: sanitizeText(c.text),
     image_storage_path: c.imageStoragePath,
     has_image: c.hasImage,
     page_or_slide: c.pageOrSlide,

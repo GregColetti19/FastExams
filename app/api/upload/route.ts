@@ -75,6 +75,18 @@ export async function POST(request: NextRequest) {
 
     if (uploadError) {
       console.error('Storage upload error:', uploadError)
+      // Supabase storage returns statusCode '413' when the file exceeds the
+      // bucket's size limit (distinct from our own MAX_FILE_SIZE_MB check above,
+      // which only validates against the app-configured limit).
+      const isTooLarge =
+        (uploadError as any).statusCode === '413' ||
+        String((uploadError as any).message).includes('maximum allowed size')
+      if (isTooLarge) {
+        return NextResponse.json(
+          { error: 'File exceeds the storage size limit. Try a smaller file.', code: 'FILE_TOO_LARGE' },
+          { status: 413 }
+        )
+      }
       return NextResponse.json(
         { error: 'Failed to upload file', code: 'UPLOAD_FAILED' },
         { status: 500 }

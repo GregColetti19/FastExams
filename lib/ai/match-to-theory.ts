@@ -2,6 +2,39 @@ import { PROMPTS, parseJsonResponse } from './prompts'
 import { getClient, AI_MODEL } from './client'
 import { cosineSimilarity } from './embeddings'
 
+export interface ChunkMatch {
+  chunkId: string
+  subtopicId: string | null
+  score: number
+  contentText: string
+}
+
+/**
+ * pgvector RPC retrieval: find the best theory chunk for a question via Postgres
+ * ANN search (ivfflat cosine index from migration 005+009). Returns the top hit.
+ * Falls back to empty match on error so the caller can degrade gracefully.
+ */
+export async function matchChunkForQuestion(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  examId: string,
+  queryEmbedding: number[]
+): Promise<ChunkMatch> {
+  const { data, error } = await supabase.rpc('match_chunks', {
+    query_embedding: queryEmbedding,
+    p_exam_id: examId,
+    match_count: 5,
+  })
+  if (error || !data?.length) return { chunkId: '', subtopicId: null, score: 0, contentText: '' }
+  const best = data[0]
+  return {
+    chunkId: best.id,
+    subtopicId: best.subtopic_id,
+    score: best.similarity,
+    contentText: best.content_text,
+  }
+}
+
 export interface TheoryMatchResult {
   subtopicId: string
   matchScore: number

@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { FileRole, ProcessingStatus } from '@/types'
 
+// If any file stays in generating_questions longer than this, surface a retry.
+const STALL_TIMEOUT_MS = 10 * 60 * 1000
+
 interface UploadZoneProps {
   examId: string
 }
@@ -16,11 +19,26 @@ export function UploadZone({ examId }: UploadZoneProps) {
   const [fileRole, setFileRole] = useState<FileRole>('theory')
   const [uploading, setUploading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [stalled, setStalled] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [files, setFiles] = useState<Array<{ id: string; name: string; status: ProcessingStatus; error?: string }>>([])
   const [pollInterval, setPollInterval] = useState<number | null>(null)
+  const [isExistingExam, setIsExistingExam] = useState(false)
+  const generatingStartedAt = useRef<number | null>(null)
   const supabase = createClient()
+
+  // Detect if this exam already has generated content (topics exist).
+  // If so, new uploads trigger recalibration rather than first-time generation.
+  useEffect(() => {
+    supabase
+      .from('topics')
+      .select('id')
+      .eq('exam_id', examId)
+      .limit(1)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then(({ data }: any) => setIsExistingExam((data || []).length > 0))
+  }, [examId, supabase])
 
   // Poll for file status updates
   useEffect(() => {
@@ -51,9 +69,20 @@ export function UploadZone({ examId }: UploadZoneProps) {
       )
       if (settled) {
         setPollInterval(null)
+        generatingStartedAt.current = null
         const generated = updatedFiles.every((f) => f.status === 'done' || f.status === 'error')
         if (generated && updatedFiles.some((f) => f.status === 'done')) {
           router.push(`/exam/${examId}`)
+        }
+      }
+
+      // Stall detection: any file stuck at generating_questions beyond the timeout.
+      const anyGenerating = updatedFiles.some((f) => f.status === 'generating_questions')
+      if (anyGenerating && generatingStartedAt.current !== null) {
+        if (Date.now() - generatingStartedAt.current > STALL_TIMEOUT_MS) {
+          setPollInterval(null)
+          setGenerating(false)
+          setStalled(true)
         }
       }
     }, 2000)
@@ -61,25 +90,29 @@ export function UploadZone({ examId }: UploadZoneProps) {
     return () => clearInterval(interval)
   }, [pollInterval, files, supabase, router, examId])
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (retry = false) => {
     setGenerating(true)
+    setStalled(false)
     setUploadError(null)
     try {
       const res = await fetch('/api/generate-exam', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ examId }),
+        body: JSON.stringify({ examId, retry, recalibrate: isExistingExam }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error || `Generation failed (${res.status})`)
       }
-      // Optimistically flip ready files to generating, then resume polling.
+      // Optimistically flip ready/stalled files to generating, then resume polling.
       setFiles((prev) =>
         prev.map((f) =>
-          f.status === 'ready' ? { ...f, status: 'generating_questions' as ProcessingStatus } : f
+          f.status === 'ready' || f.status === 'generating_questions'
+            ? { ...f, status: 'generating_questions' as ProcessingStatus }
+            : f
         )
       )
+      generatingStartedAt.current = Date.now()
       setPollInterval(2000)
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : 'Generation failed')
@@ -326,22 +359,37 @@ export function UploadZone({ examId }: UploadZoneProps) {
           {showGenerate && (
             <div className="mt-6 pt-6 border-t border-slate-200">
               <p className="text-sm text-slate-600 mb-3">
-                All files uploaded. Generate the quiz — past-exam questions are used as-is;
-                AI questions are generated from theory only when no past exams were uploaded.
+                {isExistingExam
+                  ? 'New theory uploaded. This will process the material and re-attempt grounding for any previously unanswerable past-exam questions.'
+                  : 'All files uploaded. Generate the quiz — past-exam questions are used as-is; AI questions are generated from theory only when no past exams were uploaded.'}
               </p>
               <button
-                onClick={handleGenerate}
+                onClick={() => { void handleGenerate() }}
                 className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
               >
-                Generate Quiz
+                {isExistingExam ? 'Add Theory + Recalibrate Questions' : 'Generate Quiz'}
               </button>
             </div>
           )}
 
-          {isGenerating && (
+          {isGenerating && !stalled && (
             <div className="mt-6 pt-6 border-t border-slate-200 flex items-center gap-3 text-sm text-slate-600">
               <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
               Generating questions… you’ll be taken to the exam when it’s ready.
+            </div>
+          )}
+
+          {stalled && (
+            <div className="mt-6 pt-6 border-t border-slate-200">
+              <p className="text-sm text-amber-700 mb-3">
+                Generation appears to have stalled. This can happen if the server restarted mid-run.
+              </p>
+              <button
+                onClick={() => { void handleGenerate(true) }}
+                className="w-full px-4 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium"
+              >
+                Retry Generation
+              </button>
             </div>
           )}
         </div>

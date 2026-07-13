@@ -5,7 +5,7 @@ untuned parameters. Update this when you defer something or bake in an
 assumption — don't let it live only in a commit message or someone's head.
 
 Status: 🔴 blocker · 🟠 important · 🟡 nice-to-have · 🔵 assumption to revisit
-Last updated: 2026-06-15
+Last updated: 2026-07-06
 
 ---
 
@@ -17,14 +17,15 @@ force passes). Validate + tune against a labeled eval set across multiple exams.
 
 | Constant | Value | Where | Notes |
 |---|---|---|---|
-| `EMBED_MATCH_MIN_SCORE` | 0.25 | app/api/generate-questions/route.ts | min cosine to attempt grounding 🟠 |
-| `ANSWER_MIN_CONFIDENCE` | 0.4 | app/api/generate-questions/route.ts | below → flag unanswerable 🟠 |
+| `EMBED_MATCH_MIN_SCORE` | 0.25 | app/api/generate-questions/route.ts, app/api/recalibrate/route.ts | min cosine to attempt grounding 🟠 |
+| `ANSWER_MIN_CONFIDENCE` | 0.4 | app/api/generate-questions/route.ts, app/api/recalibrate/route.ts | below → flag unanswerable 🟠 |
 | chunk target tokens | 500 | process-file route (`splitChunksByTokens`) | RAG default 🟡 |
 | `MAX_INPUT_CHARS` | 8000 | lib/ai/embeddings.ts | OpenAI 8191-token cap; principled 🔵 |
 | `EMBED_BATCH` | 96 | lib/ai/embeddings.ts | per-request input cap; principled 🔵 |
 | `seedK` | 3 | lib/ai/assign-subtopics.ts | chunks used to seed each subtopic center 🟡 |
 | `iters` | 2 | lib/ai/assign-subtopics.ts | refinement passes 🟡 |
 | `confidentMargin` | 0.03 | lib/ai/assign-subtopics.ts | min best-vs-2nd cosine gap to be "confident" 🟠 |
+| `STALL_TIMEOUT_MS` | 600_000 (10 min) | components/exam/UploadZone.tsx | generation stall detection threshold 🟡 |
 
 ⚠️ **Tiebreak cost:** on real data ~36% of chunks land unconfident → that many LLM tie-break calls per theory file (cheap each, but 343 chunks → ~125 calls). Tune `confidentMargin` / subtopic-description quality to cut this; or batch the tiebreak (one call for several chunks). 🟠
 
@@ -36,76 +37,71 @@ force passes). Validate + tune against a labeled eval set across multiple exams.
 - [ ] 🔵 **Medical domain baked into prompts.** `"expert medical educator"`, `subject='medicine'` default (lib/ai/prompts.ts, extract-topics.ts). Pre-existing app design. If non-medical exams are ever supported, parametrize `subject` end-to-end (extract-topics already has the param; others don't).
 - [ ] 🔵 **MCQ format = lettered options A–E.** `optionLetter()` in generate-questions route + `is_correct` matching assume "A. ...", "B) ...". Non-lettered / numbered / open formats not handled for auto-answer.
 - [ ] 🔵 **Embedding provider = OpenAI text-embedding-3-small (1536d).** Local multilingual embeddings via the Python converter remain a zero-cost/private swap option (would change vector dim → migration).
+- [ ] 🔵 **Mock user ID hardcoded in two places.** `MOCK_USER_ID = '6a7223fc-...'` duplicated in QuizEngine.tsx and FlashcardEngine.tsx (and upload route). Extract to a shared dev constant.
 
 ## Known broken / limited on real data
 
-- [x] ✅ **Theory → subtopic mapping** (was: string-match `candidate_subtopic` collapsed all chunks to one bin). Replaced 2026-06-13 with seeded embedding refinement: content-grounded tree (`extractTopicHierarchy`, subtopics carry descriptions) → seed each subtopic from nearest chunks → assign + recompute centers (lib/ai/assign-subtopics.ts) → LLM tie-break for the unconfident minority (`tiebreakSubtopic`). Real run: 343 chunks spread across 12 subtopics (was 1). See thresholds above for tuning.
-- [ ] 🟡 **Brute-force cosine retrieval in app code.** Fine at one exam's scale; switch to pgvector RPC (index already created in migration 005) when corpora grow.
+- [x] ✅ **Theory → subtopic mapping** (was: string-match collapsed all chunks to one bin). Replaced 2026-06-13 with seeded embedding refinement.
+- [x] ✅ **Embedding speed.** 2026-07-06: (a) `embedTexts` batches now run in parallel via `Promise.all` (lib/ai/embeddings.ts); (b) past-exam grounding uses pgvector ANN search via `match_chunks` RPC (migration 009, lib/ai/match-to-theory.ts `matchChunkForQuestion`) instead of fetching all chunks + brute-force JS cosine. Mock path unchanged (brute-force fallback when `isEmbedMockEnabled()`). **Migration 009 must be applied to real Supabase to activate pgvector path.**
 - [ ] 🟡 **`process-file` async work is fire-and-forget** (`setImmediate` → fetch generate-questions). Not a real queue; failures only surface via DB status. MVP limitation.
 - [ ] 🟡 **`extractLargeExam` splits on a question-number regex** (`^\d+\.` etc.); brittle for exams numbered differently.
 
 ## New-exam workflow (spec reconciliation 2026-06-15)
 
-Reconciled the built ingestion flow against the target UX spec. Decisions made:
-
-- [x] ✅ **Two-phase ingestion: upload-all THEN generate.** Generation no longer
-  fires per-file as each upload lands (that raced — a past exam could finish
-  before the theory tree existed, and the past-exam gate saw the wrong set).
-  New flow: `process-file` converts/chunks/embeds and marks the file `ready`
-  (new status) — it does NOT trigger generation. The user uploads every file,
-  then clicks **Generate Quiz** in `UploadZone`, which POSTs `/api/generate-exam`.
-  That orchestrator runs **theory files first, then past-exam files** (sequential,
-  so past-exam answers ground against the already-assigned theory subtopics).
-- [x] ✅ **Conditional question generation (exam-level).** With all files present
-  before generation, the `hasPastExams` gate in `processTheoryFile` reliably
-  sees the full set: if any `past_exam` file exists, the theory pipeline skips
-  AI question/flashcard generation (real past-exam questions are authoritative)
-  but still builds the topic/subtopic tree (needed to ground past-exam answers +
-  structure study). No past exams → AI-generate from theory.
-- [x] ✅ **Redirect after generation.** Once generation completes (all files
-  `done`/`error`, ≥1 `done`), `UploadZone` routes to `/exam/[examId]` (populated
-  dashboard). `ready` is a settle point that stops polling and shows the
-  Generate button without redirecting.
-- [x] ✅ **"Stuck on Generate" fix (past-exam exam).** When an exam has past
-  exams, `processTheoryFile` skips question generation but used to STILL run the
-  LLM tie-break (one call per unconfident chunk → ~270 sequential calls on a
-  large doc → 5–10 min spinner = "stuck"). The tie-break only refines labels for
-  generated questions; past-exam grounding ranks by embedding and tolerates a
-  coarse assignment. Now `hasPastExams` is computed before Step 3b and the
-  tie-break loop is skipped when generation is skipped.
-- [ ] 🟠 **Orphaned `generating_questions` has no recovery.** If the server
-  restarts or a generation request dies mid-run, the file sticks at
-  `generating_questions` with no error and `UploadZone` polls forever (no
-  timeout). Real fix needs a job queue / heartbeat; interim option: a client
-  poll timeout that surfaces "generation stalled — retry". Tied to the
-  fire-and-forget limitation already listed above.
-- [ ] 🟠 **"Create Questions" button (on-demand AI generation).** User can add
-  new material to an already-created exam folder and explicitly trigger AI
-  question generation via a button. Needed because auto-gen is now skipped when
-  past exams exist — this is how the user opts into AI questions later. Requires
-  a generate-on-demand route (reuse `generateQuestionsFromChunks`) + UI on the
-  exam page.
+- [x] ✅ **Two-phase ingestion: upload-all THEN generate.**
+- [x] ✅ **Conditional question generation (exam-level).**
+- [x] ✅ **Redirect after generation.**
+- [x] ✅ **"Stuck on Generate" fix (past-exam exam).**
+- [x] ✅ **Mock-DB status clobber in generate-exam.**
+- [x] ✅ **Orphaned `generating_questions` stall recovery.** 2026-07-06: 10-min
+  client-side timeout in UploadZone detects stalled files and surfaces amber
+  "Retry Generation" button. `generate-exam` accepts `retry: true` → resets
+  `generating_questions → ready` before re-queuing. (components/exam/UploadZone.tsx,
+  app/api/generate-exam/route.ts)
+- [x] ✅ **Add theory + recalibrate unanswered questions.** 2026-07-06: UploadZone
+  detects existing exam (topics present) and switches to "Add Theory + Recalibrate
+  Questions" mode. `generate-exam` accepts `recalibrate: true` → after processing
+  new theory files, calls `/api/recalibrate` which re-grounds all `unanswerable` /
+  low-confidence past-exam questions against the expanded chunk pool. Covers the
+  "Create Questions" button use-case for adding new material post-generation.
+  (app/api/recalibrate/route.ts, components/exam/UploadZone.tsx)
 - [ ] 🟠 **Question-origin icon.** Every question must visibly indicate origin:
-  original/past-exam vs AI-generated (icon/badge). The `source` field
-  (`'past_exam' | 'ai_generated'`) already exists on `questions` — surface it in
-  QuizCard/FlashCard.
-- [ ] 🟡 **Async checkpoint UX (spec step 5 — "to be done").** Distinct,
-  user-visible checkpoints A (upload ok) / B (concepts extracted) / C (questions
-  compiled) via toasts/checkmarks. Currently only a generic per-file status
-  string (`pending→processing→generating_questions→done`). No separate
-  "concepts extracted" stage surfaced.
-- [ ] 🔵 **Target Date dropped (for now).** Spec proposed an optional exam Target
-  Date at creation. Deliberately **not** built — revisit if study-scheduling /
-  countdown features land. No schema column added.
-- [ ] 🔵 **Input formats: PDF + PPTX only (for now).** Spec listed PDF/DOCX/TXT/URL.
-  Keeping PDF + PPTX only; DOCX/TXT/URL ingestion deferred (each needs a new
-  converter path in the Python service + `UploadZone` accept list).
+  past-exam vs AI-generated (icon/badge). The `source` field (`'past_exam' |
+  'ai_generated'`) exists on `questions` — surface it in QuizCard/FlashCard.
+- [ ] 🟡 **Async checkpoint UX (spec step 5).** Distinct user-visible checkpoints
+  A (upload ok) / B (concepts extracted) / C (questions compiled) via
+  toasts/checkmarks. Currently only a generic per-file status string.
+- [ ] 🔵 **Target Date dropped (for now).** No schema column added; revisit if
+  study-scheduling / countdown features land.
+- [ ] 🔵 **Input formats: PDF + PPTX only (for now).** DOCX/TXT/URL deferred.
+
+## Bugs fixed (2026-07-06)
+
+- [x] ✅ **`record-attempt` 400 → 0% score.** `sessionId` was always `''` because
+  `study_sessions` insert lacked `user_id` (NOT NULL FK → fails silently).
+  `record-attempt` required `sessionId` → every attempt 400 → `setAnswers` never
+  ran → session summary showed 0%. Fixes: (1) added `user_id: MOCK_USER_ID` to
+  session insert in QuizEngine + FlashcardEngine; (2) `record-attempt` now only
+  requires `questionId` + `isCorrect` — session operations conditional on
+  `sessionId`; (3) QuizEngine updates `answers` state immediately (local-first),
+  API is fire-and-forget.
+- [x] ✅ **Flashcard engine crash on load.** Session creation threw on failure
+  (unlike QuizEngine which made it best-effort) → always showed error state,
+  never showed cards. Fixed: session best-effort, `user_id` added, card advance
+  is now synchronous (no API blocking). Progress bar fixed (started at 1/N, now 0).
+  Completed screen now links back to correct exam page. (components/flashcards/)
+- [x] ✅ **`generateQuestionsFromText` truncated JSON.** `max_tokens: 2048` too
+  low for Portuguese medical MCQs (≈1900 tokens for 5 questions). Increased to
+  4096. (lib/ai/generate-questions.ts)
+- [x] ✅ **Storage 413 swallowed as 500.** Supabase storage limit exceeded returned
+  generic 500. Now detects `statusCode === '413'` and returns HTTP 413 with
+  "File exceeds the storage size limit" message. (app/api/upload/route.ts)
 
 ## Deferred features
 
-- [ ] 🟠 **Answer-determination UI.** Surface "AI-suggested · unverified · confidence X" badge + source citation + an override button in the quiz (override-answer route already exists).
-- [x] ✅ **Study logic wiring (item 3).** Done 2026-06-14. In-session repropose of wrong answers (lib/scheduling/session-queue.ts, `MAX_REQUEUE=1`) wired into QuizEngine; quiz filters to answerable MCQs (excludes flashcards + `unanswerable`); review "Start Review" scopes to due (`?due=1`); subtopic mastery now aggregates across all subtopic questions (was: overwritten from one question). `MAX_REQUEUE` is a tuning knob.
-- [x] ✅ **Front-end on mock DB (item 4) — done 2026-06-14.** Mock is the reliable dev default via committed `.env.development` (`DB_MODE`+`NEXT_PUBLIC_DB_MODE=mock`, dev-only so prod unaffected); `assertRealConfig()` throws a clear error when the real DB is selected but unconfigured (no more cryptic "Failed to fetch"); mock QueryBuilder throws loudly on nested relational selects (no FK-join engine); mock auth stubbed (`signOut`/`signInWithPassword`/`signUp`) so Navbar sign-out doesn't crash. All pages verified 200 on mock DB (dashboard/exam/exam-upload/review/quiz/quiz?due=1/flashcards); fixed nested selects in quiz, review, and exam pages (flat fetch + attach). Optional later: real FK-join support in lib/supabase/mock/query.ts so pages can use idiomatic nested selects; real auth flow (login/signup forms aren't reachable in mock — always dev user).
+- [ ] 🟠 **Answer-determination UI.** Surface "AI-suggested · unverified · confidence X" badge + source citation + override button in the quiz. Override route already exists.
+- [x] ✅ **Study logic wiring (item 3).** Done 2026-06-14.
+- [x] ✅ **Front-end on mock DB (item 4).** Done 2026-06-14.
 - [ ] 🟡 **Visual / image questions.** On hold. Needs image↔text matching — reuses the embedding retrieval layer.
 - [ ] 🟡 **Cost optimization.** Haiku tiering for cheap text steps + prompt caching on stable system prompts / theory.
 - [ ] 🟡 **Spaced repetition algorithm.** Simple interval×2.5 in lib/scheduling; replaceable with FSRS later.
@@ -113,5 +109,6 @@ Reconciled the built ingestion flow against the target UX spec. Decisions made:
 ## Migrations not yet applied to a real Supabase
 
 004 (answer_status, ai_confidence), 005 (chunks.embedding + ivfflat), 006
-(chunk candidate columns). Dev runs on the mock DB; apply these before any real
-Supabase deploy.
+(chunk candidate columns), **009 (match_chunks RPC — required for pgvector
+retrieval path)**. Dev runs on the mock DB; apply all before any real Supabase
+deploy.

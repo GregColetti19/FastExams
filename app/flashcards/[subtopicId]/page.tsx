@@ -6,9 +6,6 @@ import { BackButton } from '@/components/shared/BackButton'
 export default async function FlashcardsPage({ params }: { params: { subtopicId: string } }) {
   const supabase = await createServerClient_()
 
-  // Dev mode: skip auth
-
-  // Fetch subtopic info
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: subtopic } = await (supabase
     .from('subtopics')
@@ -16,15 +13,22 @@ export default async function FlashcardsPage({ params }: { params: { subtopicId:
     .eq('id', params.subtopicId)
     .single()) as any
 
-  if (!subtopic) {
-    redirect('/dashboard')
-  }
+  if (!subtopic) redirect('/dashboard')
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: topic } = await (supabase
+    .from('topics')
+    .select('exam_id')
+    .eq('id', subtopic.topic_id)
+    .single()) as any
+
+  const examId = (topic as any)?.exam_id ?? ''
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
-      <BackButton label="Back" />
+      <BackButton label="Back" href={examId ? `/exam/${examId}` : '/dashboard'} />
       <h1 className="text-2xl font-bold text-slate-900 mb-6">Flashcards: {subtopic.name}</h1>
-      <FlashcardEngine subtopicId={params.subtopicId} />
+      <FlashcardEngine subtopicId={params.subtopicId} examId={examId} />
     </div>
   )
 }

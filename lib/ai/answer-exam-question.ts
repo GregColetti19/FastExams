@@ -59,9 +59,19 @@ export async function answerExamQuestion(
   const responseText =
     message.content[0]?.type === 'text' ? (message.content[0].text ?? '') : ''
 
-  // Model returns snake_case keys; accept both shapes.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const parsed = parseJsonResponse(responseText) as Record<string, any>
+  let parsed: Record<string, any>
+  try {
+    parsed = parseJsonResponse(responseText) as Record<string, any>
+  } catch {
+    // Claude returned plain text instead of JSON (e.g. when theory context is
+    // too weak to ground an answer). Treat as unanswerable — never guess.
+    console.warn(
+      `answerExamQuestion: non-JSON response for "${questionText.slice(0, 80)}"\n` +
+      `  response: ${responseText.slice(0, 200)}`
+    )
+    return { ...UNANSWERABLE }
+  }
 
   // Normalize + guard: treat missing/invalid fields as unanswerable.
   const confidence =

@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
   try {
     const { sessionId, questionId, selectedOptionId, isCorrect, timeSpentSeconds } = await request.json()
 
-    if (!sessionId || !questionId || isCorrect === undefined) {
+    if (!questionId || isCorrect === undefined) {
       return NextResponse.json(
         { error: 'Missing required fields', code: 'MISSING_FIELDS' },
         { status: 400 }
@@ -15,27 +15,26 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createServerClient_()
 
-    // Insert attempt
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: attemptError } = await (supabase
-      .from('question_attempts') as any)
-      .insert([
-        {
-          session_id: sessionId,
-          question_id: questionId,
-          selected_option_id: selectedOptionId || null,
-          is_correct: isCorrect,
-          time_spent_seconds: timeSpentSeconds || null,
-        },
-      ])
-      .select() as any
+    // Insert attempt only when a valid session exists (session creation is
+    // best-effort in dev; question scheduling below always runs regardless).
+    if (sessionId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: attemptError } = await (supabase
+        .from('question_attempts') as any)
+        .insert([
+          {
+            session_id: sessionId,
+            question_id: questionId,
+            selected_option_id: selectedOptionId || null,
+            is_correct: isCorrect,
+            time_spent_seconds: timeSpentSeconds || null,
+          },
+        ])
+        .select() as any
 
-    if (attemptError) {
-      console.error('Failed to insert attempt:', attemptError)
-      return NextResponse.json(
-        { error: 'Failed to record attempt', code: 'DB_ERROR' },
-        { status: 500 }
-      )
+      if (attemptError) {
+        console.error('Failed to insert attempt (non-fatal):', attemptError)
+      }
     }
 
     // Fetch current question schedule
@@ -71,24 +70,25 @@ export async function POST(request: NextRequest) {
       })
       .eq('id', questionId)
 
-    // Update session
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: session } = await (supabase.from('study_sessions') as any)
-      .select('*')
-      .eq('id', sessionId)
-      .single() as any
-
-    if (session) {
-      const newCorrectCount = isCorrect ? session.correct_count + 1 : session.correct_count
-      const newTotalCount = session.total_questions + 1
-
+    // Update session stats if session exists.
+    if (sessionId) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from('study_sessions') as any)
-        .update({
-          total_questions: newTotalCount,
-          correct_count: newCorrectCount,
-        })
+      const { data: session } = await (supabase.from('study_sessions') as any)
+        .select('*')
         .eq('id', sessionId)
+        .single() as any
+
+      if (session) {
+        const newCorrectCount = isCorrect ? session.correct_count + 1 : session.correct_count
+        const newTotalCount = session.total_questions + 1
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from('study_sessions') as any)
+          .update({
+            total_questions: newTotalCount,
+            correct_count: newCorrectCount,
+          })
+          .eq('id', sessionId)
+      }
     }
 
     // Recalculate subtopic mastery across ALL its questions (not just this one).

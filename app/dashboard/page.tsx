@@ -6,14 +6,13 @@ import { NewExamDialog } from '@/components/exam/NewExamDialog'
 export default async function DashboardPage() {
   const supabase = await createServerClient_()
 
-  // Dev mode: use mock user
-  const mockUserId = '6a7223fc-a96d-434a-9125-98ba6e4daca3'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: exams } = (await supabase
+  const { data: exams, error: examsError } = (await supabase
     .from('exams')
-    .select('id, name, description, created_at, updated_at, user_id, exam_id, language')
-    .eq('user_id', mockUserId)
+    .select('id, name, description, created_at, updated_at, user_id, language')
     .order('created_at', { ascending: false })) as any
+
+  if (examsError) console.error('Dashboard exams fetch error:', examsError)
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">

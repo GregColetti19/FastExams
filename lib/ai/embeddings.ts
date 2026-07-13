@@ -29,26 +29,32 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   // Truncate oversized inputs (a single 8191+ token input 400s the whole call).
   const inputs = texts.map((t) => (t || '').slice(0, MAX_INPUT_CHARS))
 
-  const out: number[][] = []
+  const batches: string[][] = []
   for (let i = 0; i < inputs.length; i += EMBED_BATCH) {
-    const batch = inputs.slice(i, i + EMBED_BATCH)
-    const res = await fetch('https://api.openai.com/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ model: EMBED_MODEL, input: batch }),
-    })
-    if (!res.ok) {
-      throw new Error(
-        `OpenAI embeddings ${res.status} (batch ${i}-${i + batch.length}): ${await res.text()}`
-      )
-    }
-    const data = (await res.json()) as { data: Array<{ embedding: number[] }> }
-    out.push(...data.data.map((d) => d.embedding))
+    batches.push(inputs.slice(i, i + EMBED_BATCH))
   }
-  return out
+
+  const results = await Promise.all(
+    batches.map(async (batch, bi) => {
+      const res = await fetch('https://api.openai.com/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ model: EMBED_MODEL, input: batch }),
+      })
+      if (!res.ok) {
+        const offset = bi * EMBED_BATCH
+        throw new Error(
+          `OpenAI embeddings ${res.status} (batch ${offset}-${offset + batch.length}): ${await res.text()}`
+        )
+      }
+      const data = (await res.json()) as { data: Array<{ embedding: number[] }> }
+      return data.data.map((d) => d.embedding)
+    }),
+  )
+  return results.flat()
 }
 
 export async function embedText(text: string): Promise<number[]> {

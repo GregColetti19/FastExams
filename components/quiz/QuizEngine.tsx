@@ -25,6 +25,8 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
   const [lastCorrect, setLastCorrect] = useState(false)
   const [step, setStep] = useState(0) // forces QuizCard remount when a question reappears
   const [answers, setAnswers] = useState<Record<string, { isCorrect: boolean; timeSpent: number }>>({})
+  // History of queue snapshots for back-navigation (pre-advance state).
+  const [history, setHistory] = useState<QueueState[]>([])
   const [error, setError] = useState('')
   // Stable client + run-once guard: a fresh createClient() each render made the
   // init effect re-fire on every render, inserting a study_session each time.
@@ -37,53 +39,38 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
     initedRef.current = true
     const initializeQuiz = async () => {
       try {
-        // Create study session
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: sessionData, error: sessionError } = await (supabase
-          .from('study_sessions') as any)
-          .insert([
-            {
-              subtopic_id: subtopicId,
-              session_type: 'quiz',
-            },
+        // Fire session creation and question fetches in parallel.
+        // Session insert is best-effort — quiz runs even if it fails (no auth in dev).
+        // Mock user matches the hardcoded dev user in /api/upload (profiles row required).
+        const MOCK_USER_ID = '6a7223fc-a96d-434a-9125-98ba6e4daca3'
+        const sessionPromise = (supabase.from('study_sessions') as any)
+          .insert([{ subtopic_id: subtopicId, session_type: 'quiz', user_id: MOCK_USER_ID }])
+          .select()
+          .then(({ data, error }: any) => {
+            if (error) console.warn('study_sessions insert failed (non-fatal):', error.message)
+            else setSessionId(data?.[0]?.id ?? '')
+          })
+          .catch((e: any) => console.warn('study_sessions error (non-fatal):', e))
+
+        const [{ data: questionsData, error: qError }, { data: optionsData, error: oError }] =
+          await Promise.all([
+            (supabase.from('questions').select('*').in('id', questionIds)) as any,
+            (supabase.from('question_options').select('*').in('question_id', questionIds)) as any,
           ])
-          .select() as any
 
-        if (sessionError) throw sessionError
-        if (!sessionData?.[0]) throw new Error('Failed to create session')
+        // Let session finish in background — don't block quiz start
+        sessionPromise.catch(() => {})
 
-        setSessionId(sessionData[0].id)
-
-        // Fetch questions
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: questionsData, error: qError } = await (supabase
-          .from('questions')
-          .select('*')
-          .in('id', questionIds)) as any
-
-        if (qError) throw qError
-        if (!questionsData) throw new Error('No questions found')
+        if (qError) throw new Error(`Questions fetch failed: ${qError.message}`)
+        if (!questionsData?.length) throw new Error('No questions found for this subtopic')
 
         setQuestions(questionsData)
         setQueueState({ queue: questionsData.map((q: any) => q.id), requeued: {} })
 
-        // Fetch options for all questions
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: optionsData, error: oError } = await (supabase
-          .from('question_options')
-          .select('*')
-          .in(
-            'question_id',
-            questionsData.map((q: any) => q.id)
-          )) as any
-
-        if (oError) throw oError
         if (optionsData) {
           const optionsMap: Record<string, QuestionOption[]> = {}
           optionsData.forEach((opt: any) => {
-            if (!optionsMap[opt.question_id]) {
-              optionsMap[opt.question_id] = []
-            }
+            if (!optionsMap[opt.question_id]) optionsMap[opt.question_id] = []
             optionsMap[opt.question_id].push(opt)
           })
           setOptions(optionsMap)
@@ -96,7 +83,10 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
       }
     }
 
-    initializeQuiz()
+    initializeQuiz().catch((err) => {
+      console.error('Quiz init unhandled rejection:', err)
+      setError(err instanceof Error ? err.message : String(err))
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -104,41 +94,41 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
     const currentId = queueState.queue[0]
     setLastCorrect(isCorrect)
 
-    try {
-      const response = await fetch('/api/record-attempt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          questionId: currentId,
-          selectedOptionId,
-          isCorrect,
-          timeSpentSeconds: timeSpent,
-        }),
-      })
+    // Local state is source of truth for UI — update regardless of API success.
+    // A reproposed question overwrites the previous (wrong) answer if now correct.
+    setAnswers((prev) => ({ ...prev, [currentId]: { isCorrect, timeSpent } }))
 
-      if (!response.ok) {
-        throw new Error('Failed to record attempt')
-      }
-
-      // Keep the latest result per question (a reproposed one may flip to correct).
-      setAnswers({
-        ...answers,
-        [currentId]: { isCorrect, timeSpent },
-      })
-    } catch (err) {
-      console.error('Error recording attempt:', err)
-    }
+    // Persist to server best-effort (scheduling + mastery update).
+    fetch('/api/record-attempt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: sessionId || null,
+        questionId: currentId,
+        selectedOptionId,
+        isCorrect,
+        timeSpentSeconds: timeSpent,
+      }),
+    }).catch((err) => console.error('Error recording attempt:', err))
   }
 
   const handleContinue = () => {
     const next = advanceQueue(queueState, lastCorrect)
+    setHistory((h) => [...h, queueState])
     if (isSessionComplete(next)) {
       setState('completed')
     } else {
       setQueueState(next)
-      setStep((s) => s + 1) // remount QuizCard for the next (or reproposed) question
+      setStep((s) => s + 1)
     }
+  }
+
+  const handleBack = () => {
+    if (history.length === 0) return
+    const prev = history[history.length - 1]
+    setHistory((h) => h.slice(0, -1))
+    setQueueState(prev)
+    setStep((s) => s + 1)
   }
 
   if (state === 'loading') {
@@ -209,6 +199,8 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
         options={currentOptions}
         onAnswer={handleAnswer}
         onContinue={handleContinue}
+        onBack={handleBack}
+        canGoBack={history.length > 0}
       />
     </div>
   )
