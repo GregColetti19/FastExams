@@ -7,6 +7,8 @@ function post(body: any) {
   return POST({ json: async () => body } as any)
 }
 
+const FSRS_DEFAULTS = { stability: 0, difficulty: 0, reps: 0, lapses: 0, fsrs_state: 0, learning_steps: 0 }
+
 beforeEach(() => {
   resetMockStore()
   const store = getMockStore()
@@ -21,6 +23,7 @@ beforeEach(() => {
       times_correct: 0,
       current_interval_days: 1,
       last_seen_at: null,
+      ...FSRS_DEFAULTS,
     },
   ])
   store.seed('study_sessions', [
@@ -28,7 +31,7 @@ beforeEach(() => {
   ])
 })
 
-describe('POST /api/record-attempt (mock DB)', () => {
+describe('POST /api/record-attempt (mock DB, FSRS scheduler)', () => {
   it('rejects missing fields with 400', async () => {
     const res = await post({ sessionId: 'sess1' })
     expect(res.status).toBe(400)
@@ -36,13 +39,13 @@ describe('POST /api/record-attempt (mock DB)', () => {
     expect(json.code).toBe('MISSING_FIELDS')
   })
 
-  it('records a correct attempt and updates schedule, session, mastery', async () => {
+  it('records a correct attempt and advances FSRS state', async () => {
     const res = await post({ sessionId: 'sess1', questionId: 'q1', isCorrect: true, timeSpentSeconds: 5 })
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.success).toBe(true)
-    expect(json.intervalDays).toBe(2.5) // 1 * 2.5
-    expect(json.masteryScore).toBe(100)
+    expect(json.nextReviewAt).toBeTruthy()
+    expect(json.stability).toBeGreaterThan(0) // a Good review always grows stability from 0
 
     const store = getMockStore()
     // attempt persisted
@@ -51,28 +54,41 @@ describe('POST /api/record-attempt (mock DB)', () => {
     const q = store.table('questions')[0]
     expect(q.times_seen).toBe(1)
     expect(q.times_correct).toBe(1)
-    expect(q.current_interval_days).toBe(2.5)
+    expect(q.reps).toBe(1)
+    expect(q.stability).toBeGreaterThan(0)
+    expect(new Date(q.next_review_at).getTime()).toBeGreaterThan(Date.now())
     expect(q.last_seen_at).toBeTruthy()
     // session counters bumped
     const sess = store.table('study_sessions')[0]
     expect(sess.total_questions).toBe(1)
     expect(sess.correct_count).toBe(1)
-    // subtopic mastery recalculated
-    expect(store.table('subtopics')[0].mastery_score).toBe(100)
+    // subtopic mastery recalculated from FSRS state — a brand-new card isn't
+    // instantly "mastered" off one review, but it's no longer at the floor
+    const mastery = store.table('subtopics')[0].mastery_score
+    expect(mastery).toBeGreaterThan(0)
+    expect(mastery).toBeLessThan(100)
   })
 
-  it('incorrect attempt resets interval and lowers mastery', async () => {
-    await post({ sessionId: 'sess1', questionId: 'q1', isCorrect: true })
+  it('an Again grade records a lapse once the card has graduated to Review', async () => {
+    // graduate q1 out of short-term learning steps first
+    let lastDue = new Date()
+    for (let i = 0; i < 8; i++) {
+      await post({ sessionId: 'sess1', questionId: 'q1', isCorrect: true })
+      const store = getMockStore()
+      const q = store.table('questions')[0]
+      if (q.fsrs_state === 2) break // Review
+      lastDue = new Date(q.next_review_at)
+    }
+    const store = getMockStore()
+    const lapsesBefore = store.table('questions')[0].lapses
+
     const res = await post({ sessionId: 'sess1', questionId: 'q1', isCorrect: false })
     const json = await res.json()
-    expect(json.intervalDays).toBe(1) // reset on incorrect
+    expect(json.success).toBe(true)
 
-    const store = getMockStore()
-    const q = store.table('questions')[0]
-    expect(q.times_seen).toBe(2)
-    expect(q.times_correct).toBe(1)
-    // 2 attempts, 1 correct → 50
-    expect(store.table('subtopics')[0].mastery_score).toBe(50)
+    const after = store.table('questions')[0]
+    expect(after.lapses).toBe(lapsesBefore + 1)
+    expect(after.times_correct).toBe(after.times_seen - 1) // the one miss
   })
 
   it('returns 404 when the question does not exist', async () => {
@@ -92,11 +108,16 @@ describe('POST /api/record-attempt (mock DB)', () => {
         times_correct: 0,
         current_interval_days: 1,
         last_seen_at: null,
+        ...FSRS_DEFAULTS,
       },
     ])
-    // q1 correct (1/1), q2 wrong (0/1) → subtopic = 1 correct / 2 seen = 50
+    // q1 answered (stability > 0), q2 untouched (stays New, mastery 0) →
+    // subtopic average should sit strictly between the two, not at either extreme.
     await post({ sessionId: 'sess1', questionId: 'q1', isCorrect: true })
-    await post({ sessionId: 'sess1', questionId: 'q2', isCorrect: false })
-    expect(store.table('subtopics')[0].mastery_score).toBe(50)
+    const q1Mastery = store.table('questions')[0].stability > 0
+    expect(q1Mastery).toBe(true)
+    const subtopicMastery = store.table('subtopics')[0].mastery_score
+    expect(subtopicMastery).toBeGreaterThan(0)
+    expect(subtopicMastery).toBeLessThan(50) // dragged down by q2 still being New
   })
 })

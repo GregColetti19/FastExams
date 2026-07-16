@@ -1,4 +1,4 @@
-export { Button } from "./Button";
+export { Button, button } from "./Button";
 export type { ButtonProps } from "./Button";
 export { MasteryRing, MasteryBar } from "./Mastery";
 export { Pill } from "./Pill";

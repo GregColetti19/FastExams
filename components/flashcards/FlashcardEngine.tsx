@@ -87,26 +87,27 @@ export function FlashcardEngine({ subtopicId, examId }: FlashcardEngineProps) {
   }
 
   if (state === 'loading') {
-    return <div className="text-center py-8 text-slate-600">Loading flashcards...</div>
+    return <div className="py-8 text-center text-ink-muted">Loading flashcards…</div>
   }
 
   if (error) {
-    return <div className="text-center py-8 text-red-600">Error: {error}</div>
+    return <div className="py-8 text-center text-coral">Error: {error}</div>
   }
 
   if (state === 'completed') {
     const correctCount = Object.values(answers).filter(Boolean).length
     const total = flashcards.length
+    const pct = Math.round((correctCount / total) * 100)
 
     return (
-      <div className="max-w-2xl mx-auto space-y-6">
-        <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-          <div className="text-5xl font-bold text-green-600 mb-2">{correctCount}/{total}</div>
-          <div className="text-xl text-slate-600">
-            {Math.round((correctCount / total) * 100)}% mastered
+      <div className="mx-auto max-w-2xl space-y-6">
+        <div className="rounded-card border border-border-hair bg-surface p-8 text-center">
+          <div className="font-display text-[48px] leading-none tabular-nums text-teal-100">
+            {correctCount}/{total}
           </div>
+          <div className="mt-2 text-lg text-ink-secondary tabular-nums">{pct}% mastered</div>
           {total - correctCount > 0 && (
-            <div className="text-sm text-slate-500 mt-2">
+            <div className="mt-2 text-sm text-ink-muted">
               {total - correctCount} card{total - correctCount !== 1 ? 's' : ''} to review again
             </div>
           )}
@@ -115,15 +116,15 @@ export function FlashcardEngine({ subtopicId, examId }: FlashcardEngineProps) {
         <div className="flex gap-3">
           <a
             href={examId ? `/exam/${examId}` : '/dashboard'}
-            className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-center font-medium"
+            className="flex-1 rounded-control border border-border-hair py-3 text-center text-sm text-ink-secondary transition-colors duration-150 hover:border-border-strong"
           >
-            Back to Exam
+            Back to exam
           </a>
           <a
-            href="/dashboard"
-            className="flex-1 px-4 py-3 bg-slate-200 text-slate-900 rounded-lg hover:bg-slate-300 text-center font-medium"
+            href="/review"
+            className="flex-1 rounded-control bg-coral py-3 text-center font-display text-white transition-colors duration-tempo hover:bg-coral-deep"
           >
-            Dashboard
+            Back to Review
           </a>
         </div>
       </div>
@@ -131,7 +132,7 @@ export function FlashcardEngine({ subtopicId, examId }: FlashcardEngineProps) {
   }
 
   if (flashcards.length === 0) {
-    return <div className="text-center py-8 text-slate-600">No flashcards available for this subtopic.</div>
+    return <div className="py-8 text-center text-ink-muted">No flashcards available for this subtopic.</div>
   }
 
   const currentCard = flashcards[currentIndex]
@@ -140,18 +141,18 @@ export function FlashcardEngine({ subtopicId, examId }: FlashcardEngineProps) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow p-4">
-        <div className="flex justify-between items-center mb-2">
-          <span className="text-sm font-medium text-slate-700">
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm text-ink-secondary tabular-nums">
             {answeredCount} of {flashcards.length} answered
           </span>
-          <span className="text-sm text-slate-500">
+          <span className="text-sm text-ink-muted tabular-nums">
             Card {currentIndex + 1} / {flashcards.length}
           </span>
         </div>
-        <div className="w-full bg-slate-200 rounded-full h-2">
+        <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-inset">
           <div
-            className="bg-blue-600 h-2 rounded-full transition-all"
+            className="h-full rounded-pill bg-teal-400 motion-safe:transition-[width] motion-safe:duration-tempo"
             style={{ width: `${(answeredCount / flashcards.length) * 100}%` }}
           />
         </div>

@@ -2,14 +2,28 @@
 
 import { useRef, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { IconUpload, IconCheck, IconX, IconAlertTriangle } from '@tabler/icons-react'
 import { createClient } from '@/lib/supabase/client'
 import { FileRole, ProcessingStatus } from '@/types'
+import { Button } from '@/components/cadence/Button'
+import { StepTrack, StageLabel, type UploadStage } from '@/components/cadence/StepTrack'
+import { cn } from '@/lib/utils'
 
 // If any file stays in generating_questions longer than this, surface a retry.
 const STALL_TIMEOUT_MS = 10 * 60 * 1000
 
 interface UploadZoneProps {
   examId: string
+}
+
+// ProcessingStatus (DB) -> UploadStage (StepTrack). 'pending' reads as the
+// track's first segment (about to process); 'error' isn't a stage, it's a
+// terminal state rendered separately.
+function toStage(status: ProcessingStatus): UploadStage {
+  if (status === 'pending' || status === 'processing') return 'processing'
+  if (status === 'ready') return 'ready'
+  if (status === 'generating_questions') return 'generating'
+  return 'done'
 }
 
 export function UploadZone({ examId }: UploadZoneProps) {
@@ -230,28 +244,26 @@ export function UploadZone({ examId }: UploadZoneProps) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-8">
-        <h2 className="text-2xl font-semibold text-slate-900 mb-6">Upload Study Material</h2>
+      <div className="rounded-card border border-border-hair bg-surface p-8">
+        <h2 className="mb-6 font-display text-[18px] text-ink">New material</h2>
 
-        {/* File Role Toggle */}
+        {/* Role toggle — segmented control, active = teal-tinted */}
         <div className="mb-6">
-          <label className="block text-sm font-medium text-slate-700 mb-3">File Type</label>
-          <div className="flex gap-4">
+          <p className="mb-3 text-sm text-ink-secondary">File type</p>
+          <div className="inline-flex rounded-control border border-border-hair p-1">
             {(['theory', 'past_exam'] as const).map((role) => (
-              <label key={role} className="flex items-center">
-                <input
-                  type="radio"
-                  name="fileRole"
-                  value={role}
-                  checked={fileRole === role}
-                  onChange={(e) => setFileRole(e.target.value as FileRole)}
-                  disabled={uploading}
-                  className="mr-2"
-                />
-                <span className="text-sm text-slate-700">
-                  {role === 'theory' ? 'Theory Material' : 'Past Exam Paper'}
-                </span>
-              </label>
+              <button
+                key={role}
+                type="button"
+                onClick={() => setFileRole(role)}
+                disabled={uploading}
+                className={cn(
+                  'rounded-control px-3 py-1.5 text-sm transition-colors duration-150',
+                  fileRole === role ? 'bg-teal-800/20 text-teal-100' : 'text-ink-muted hover:text-ink-secondary'
+                )}
+              >
+                {role === 'theory' ? 'Theory' : 'Past exam'}
+              </button>
             ))}
           </div>
         </div>
@@ -262,9 +274,11 @@ export function UploadZone({ examId }: UploadZoneProps) {
           onDragLeave={handleDrag}
           onDragOver={handleDrag}
           onDrop={handleDrop}
-          className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-            dragActive ? 'border-blue-500 bg-blue-50' : 'border-slate-300'
-          } ${uploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+          className={cn(
+            'rounded-card border-2 border-dashed p-8 text-center transition-colors duration-150',
+            dragActive ? 'border-teal-400 bg-teal-800/10' : 'border-border-hair',
+            uploading ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+          )}
         >
           <input
             ref={fileInputRef}
@@ -276,36 +290,23 @@ export function UploadZone({ examId }: UploadZoneProps) {
           />
 
           <div onClick={() => !uploading && fileInputRef.current?.click()}>
-            <svg
-              className="mx-auto h-12 w-12 text-slate-400 mb-3"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-              />
-            </svg>
-
-            <p className="text-lg font-medium text-slate-900 mb-1">Drag and drop your file here</p>
-            <p className="text-sm text-slate-600">or click to select from your computer</p>
-            <p className="text-xs text-slate-500 mt-2">Supported: PDF, PPTX (max 300MB)</p>
+            <IconUpload size={40} stroke={1.5} className="mx-auto mb-3 text-teal-400" />
+            <p className="mb-1 text-[15px] text-ink">Drag PDFs or PPTX here</p>
+            <p className="text-sm text-ink-muted">or browse files</p>
+            <p className="mt-2 text-xs text-ink-muted">Supported: PDF, PPTX (max 300MB)</p>
           </div>
         </div>
 
         {/* Upload Progress */}
         {uploading && (
           <div className="mt-4">
-            <div className="flex justify-between items-center mb-2">
-              <p className="text-sm font-medium text-slate-700">Uploading...</p>
-              <span className="text-sm text-slate-600">{uploadProgress}%</span>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-sm text-ink-secondary">Uploading…</p>
+              <span className="text-sm text-ink-muted tabular-nums">{uploadProgress}%</span>
             </div>
-            <div className="w-full bg-slate-200 rounded-full h-2">
+            <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-inset">
               <div
-                className="bg-blue-600 h-2 rounded-full transition-all"
+                className="h-full rounded-pill bg-teal-400 motion-safe:transition-[width] motion-safe:duration-tempo"
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
@@ -313,12 +314,9 @@ export function UploadZone({ examId }: UploadZoneProps) {
         )}
 
         {uploadError && (
-          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          <div className="mt-4 rounded-control bg-coral/10 p-3 text-sm text-coral-soft">
             {uploadError}
-            <button
-              onClick={() => setUploadError(null)}
-              className="ml-2 text-red-500 underline text-xs hover:no-underline"
-            >
+            <button onClick={() => setUploadError(null)} className="ml-2 text-xs underline hover:no-underline">
               Dismiss
             </button>
           </div>
@@ -327,69 +325,63 @@ export function UploadZone({ examId }: UploadZoneProps) {
 
       {/* File Status List */}
       {files.length > 0 && (
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
-          <h3 className="text-lg font-semibold text-slate-900 mb-4">Upload Status</h3>
-          <div className="space-y-3">
+        <div className="rounded-card border border-border-hair bg-surface p-6">
+          <h3 className="mb-4 font-display text-ink">Upload status</h3>
+          <div className="space-y-4">
             {files.map((f) => (
-              <div key={f.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-slate-900">{f.name}</p>
-                  <p className="text-xs text-slate-600 mt-1">
-                    {f.status === 'pending' && 'Waiting to process...'}
-                    {f.status === 'processing' && 'Converting file...'}
-                    {f.status === 'ready' && '✓ Uploaded — ready to generate'}
-                    {f.status === 'generating_questions' && 'Generating questions...'}
-                    {f.status === 'done' && '✓ Complete'}
-                    {f.status === 'error' && `✗ Error: ${f.error || 'Unknown error'}`}
-                  </p>
+              <div key={f.id} className="rounded-control bg-surface-inset p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm text-ink">{f.name}</p>
+                  {f.status === 'error' ? (
+                    <IconX size={16} className="text-coral-soft" />
+                  ) : f.status === 'done' ? (
+                    <IconCheck size={16} className="text-gold" />
+                  ) : null}
                 </div>
-                <div>
-                  {f.status === 'pending' && <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />}
-                  {f.status === 'processing' && <div className="w-4 h-4 border-2 border-orange-600 border-t-transparent rounded-full animate-spin" />}
-                  {f.status === 'ready' && <span className="text-slate-400 font-bold">✓</span>}
-                  {f.status === 'generating_questions' && <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />}
-                  {f.status === 'done' && <span className="text-green-600 font-bold">✓</span>}
-                  {f.status === 'error' && <span className="text-red-600 font-bold">✗</span>}
-                </div>
+                {f.status === 'error' ? (
+                  <p className="text-xs text-coral-soft">✗ Error: {f.error || 'Unknown error'}</p>
+                ) : (
+                  <>
+                    <StepTrack stage={toStage(f.status)} />
+                    <div className="mt-1.5">
+                      <StageLabel stage={toStage(f.status)} />
+                    </div>
+                  </>
+                )}
               </div>
             ))}
           </div>
 
           {/* Generate step — gated until all uploads are converted. */}
           {showGenerate && (
-            <div className="mt-6 pt-6 border-t border-slate-200">
-              <p className="text-sm text-slate-600 mb-3">
+            <div className="mt-6 border-t border-border-hair pt-6">
+              <p className="mb-3 text-sm text-ink-muted">
                 {isExistingExam
                   ? 'New theory uploaded. This will process the material and re-attempt grounding for any previously unanswerable past-exam questions.'
                   : 'All files uploaded. Generate the quiz — past-exam questions are used as-is; AI questions are generated from theory only when no past exams were uploaded.'}
               </p>
-              <button
-                onClick={() => { void handleGenerate() }}
-                className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
-              >
-                {isExistingExam ? 'Add Theory + Recalibrate Questions' : 'Generate Quiz'}
-              </button>
+              <Button variant="primary" className="w-full" onClick={() => { void handleGenerate() }}>
+                {isExistingExam ? 'Add theory + recalibrate' : 'Generate quiz'}
+              </Button>
             </div>
           )}
 
           {isGenerating && !stalled && (
-            <div className="mt-6 pt-6 border-t border-slate-200 flex items-center gap-3 text-sm text-slate-600">
-              <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
-              Generating questions… you’ll be taken to the exam when it’s ready.
+            <div className="mt-6 flex items-center gap-3 border-t border-border-hair pt-6 text-sm text-ink-muted">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-coral border-t-transparent" />
+              Generating questions… you&apos;ll be taken to the exam when it&apos;s ready.
             </div>
           )}
 
           {stalled && (
-            <div className="mt-6 pt-6 border-t border-slate-200">
-              <p className="text-sm text-amber-700 mb-3">
-                Generation appears to have stalled. This can happen if the server restarted mid-run.
+            <div className="mt-6 border-t border-border-hair pt-6">
+              <p className="mb-3 flex items-center gap-1.5 text-sm text-ink-secondary">
+                <IconAlertTriangle size={14} className="text-coral-soft" />
+                Taking longer than usual. This can happen if the server restarted mid-run.
               </p>
-              <button
-                onClick={() => { void handleGenerate(true) }}
-                className="w-full px-4 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium"
-              >
-                Retry Generation
-              </button>
+              <Button variant="primary" className="w-full" onClick={() => { void handleGenerate(true) }}>
+                Retry generation
+              </Button>
             </div>
           )}
         </div>

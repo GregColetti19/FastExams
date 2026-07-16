@@ -28,10 +28,10 @@ export function DeleteExamButton({ examId, examName }: { examId: string; examNam
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
+        onClick={(e) => { e.preventDefault(); setOpen(true) }}
         aria-label="Delete exam"
         title="Delete exam"
-        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+        className="rounded-control p-2 text-ink-muted transition-colors hover:bg-surface-inset hover:text-ink-secondary"
       >
         <Trash2 size={18} />
       </button>
@@ -42,27 +42,27 @@ export function DeleteExamButton({ examId, examName }: { examId: string; examNam
           onClick={() => !loading && setOpen(false)}
         >
           <div
-            className="bg-white rounded-lg shadow-xl max-w-sm w-full p-6"
+            className="w-full max-w-sm rounded-card border border-border-hair bg-surface p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-lg font-semibold text-slate-900">Delete exam?</h2>
-            <p className="text-sm text-slate-600 mt-2">
-              This permanently deletes <span className="font-medium">{examName}</span> and all its
+            <h2 className="font-display text-[18px] text-ink">Delete exam?</h2>
+            <p className="mt-2 text-sm text-ink-secondary">
+              This permanently deletes <span className="text-ink">{examName}</span> and all its
               topics, questions, files, and progress. This cannot be undone.
             </p>
-            {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
-            <div className="flex justify-end gap-3 mt-6">
+            {error && <p className="mt-3 text-sm text-coral-soft">{error}</p>}
+            <div className="mt-6 flex justify-end gap-3">
               <button
                 onClick={() => setOpen(false)}
                 disabled={loading}
-                className="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg disabled:opacity-50"
+                className="rounded-control px-4 py-2 text-sm text-ink-secondary hover:bg-surface-inset disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleDelete}
                 disabled={loading}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg disabled:opacity-50"
+                className="rounded-control bg-coral px-4 py-2 text-sm text-white hover:bg-coral-deep disabled:opacity-50"
               >
                 {loading ? 'Deleting…' : 'Delete'}
               </button>

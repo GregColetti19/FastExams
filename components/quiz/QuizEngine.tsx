@@ -132,11 +132,11 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
   }
 
   if (state === 'loading') {
-    return <div className="text-center py-8 text-slate-600">Loading quiz...</div>
+    return <div className="py-8 text-center text-ink-muted">Loading quiz…</div>
   }
 
   if (error) {
-    return <div className="text-center py-8 text-red-600">Error: {error}</div>
+    return <div className="py-8 text-center text-coral">Error: {error}</div>
   }
 
   if (state === 'completed') {
@@ -156,13 +156,13 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
   }
 
   if (questions.length === 0) {
-    return <div className="text-center py-8 text-slate-600">No questions available.</div>
+    return <div className="py-8 text-center text-ink-muted">No questions available.</div>
   }
 
   const currentId = queueState.queue[0]
   const currentQuestion = questions.find((q) => q.id === currentId)
   if (!currentQuestion) {
-    return <div className="text-center py-8 text-slate-600">No questions available.</div>
+    return <div className="py-8 text-center text-ink-muted">No questions available.</div>
   }
   const currentOptions = options[currentQuestion.id] || []
 
@@ -173,20 +173,18 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
 
   return (
     <div className="space-y-6">
-      {/* Progress */}
-      <div className="bg-white rounded-lg shadow p-4">
-        <div className="flex justify-between items-center mb-2">
-          <span className="text-sm font-medium text-slate-700">
-            {resolved} of {total} done
-            {isRepropose && (
-              <span className="ml-2 text-amber-600">↻ retry</span>
-            )}
+      {/* Progress — coral while an active session is in flight */}
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm text-ink-secondary tabular-nums">
+            Question {resolved + 1} of {total}
+            {isRepropose && <span className="ml-2 text-coral-soft">↻ retry</span>}
           </span>
-          <span className="text-sm text-slate-600">{topicName}</span>
+          <span className="text-sm text-ink-muted">{topicName}</span>
         </div>
-        <div className="w-full bg-slate-200 rounded-full h-2">
+        <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-inset">
           <div
-            className="bg-blue-600 h-2 rounded-full transition-all"
+            className="h-full rounded-pill bg-coral motion-safe:transition-[width] motion-safe:duration-tempo"
             style={{ width: `${(resolved / total) * 100}%` }}
           />
         </div>

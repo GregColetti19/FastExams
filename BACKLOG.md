@@ -65,7 +65,7 @@ force passes). Validate + tune against a labeled eval set across multiple exams.
   low-confidence past-exam questions against the expanded chunk pool. Covers the
   "Create Questions" button use-case for adding new material post-generation.
   (app/api/recalibrate/route.ts, components/exam/UploadZone.tsx)
-- [ ] 🟠 **Question-origin icon.** Every question must visibly indicate origin:
+- [x] 🟠 **Question-origin icon.** Every question must visibly indicate origin:
   past-exam vs AI-generated (icon/badge). The `source` field (`'past_exam' |
   'ai_generated'`) exists on `questions` — surface it in QuizCard/FlashCard.
 - [ ] 🟡 **Async checkpoint UX (spec step 5).** Distinct user-visible checkpoints
@@ -99,16 +99,45 @@ force passes). Validate + tune against a labeled eval set across multiple exams.
 
 ## Deferred features
 
-- [ ] 🟠 **Answer-determination UI.** Surface "AI-suggested · unverified · confidence X" badge + source citation + override button in the quiz. Override route already exists.
+- [x] ✅ **Answer-determination UI.** 2026-07-14: origin badge (past-exam vs
+  AI-generated), amber confidence badge, and inline override picker added to
+  QuizCard. Source citation (matched_chunk_id → theory quote) still not
+  surfaced — only confidence % + justification shown. (components/quiz/QuizCard.tsx)
 - [x] ✅ **Study logic wiring (item 3).** Done 2026-06-14.
 - [x] ✅ **Front-end on mock DB (item 4).** Done 2026-06-14.
 - [ ] 🟡 **Visual / image questions.** On hold. Needs image↔text matching — reuses the embedding retrieval layer.
 - [ ] 🟡 **Cost optimization.** Haiku tiering for cheap text steps + prompt caching on stable system prompts / theory.
 - [ ] 🟡 **Spaced repetition algorithm.** Simple interval×2.5 in lib/scheduling; replaceable with FSRS later.
 
-## Migrations not yet applied to a real Supabase
+## Migrations applied to real Supabase (2026-07-14)
 
-004 (answer_status, ai_confidence), 005 (chunks.embedding + ivfflat), 006
-(chunk candidate columns), **009 (match_chunks RPC — required for pgvector
-retrieval path)**. Dev runs on the mock DB; apply all before any real Supabase
-deploy.
+All 9 migrations (001-009) confirmed applied to the real Supabase project
+(`zwyhbjkqxwpqecpabhbs`). 001-008 were already live (applied manually,
+outside CLI tracking); 009 (`match_chunks` RPC — pgvector retrieval path) was
+the actual gap and has now been applied + verified. CLI migration history
+repaired so `supabase migration list` reflects reality.
+
+⚠️ **RLS is disabled on all tables** on this real project (migration 003 —
+matches mock-DB dev behavior). Fine for solo dev/testing; revisit before any
+multi-user or public deploy.
+
+## UX / frontend (added 2026-07-14)
+
+- [x] 🟠 **Research + design an "activating" frontend.** Current UI is
+  functional/utilitarian (plain Tailwind cards). Needs a design pass — pick a
+  visual direction (motion, color, typography) that makes studying feel
+  engaging rather than clinical. Scope: research phase first (references,
+  direction options), then apply across quiz/flashcard/dashboard.
+- [ ] 🟠 **Top-to-bottom UX review of the full app.** Walk every screen as a
+  real user (upload → generate → dashboard → quiz → flashcards → review),
+  note friction points, dead ends, unclear states. Not code review — actual
+  usage audit.
+- [x] 🟠 **Study-flow analytics/performance metrics are not visible or useful.**
+  Cadence UI pass (2026-07-16) added Review's due-count/horizon and an
+  Analytics page (mastery by deck, cards in rotation, reviews this week).
+- [ ] 🔵 **Analytics "mastery over time" has no real trend data.** No
+  `mastery_snapshots`-style history table exists, so the spec's §8.6 line
+  chart can't be honestly built yet — a snapshot would have to be fabricated
+  or flatlined. Left out of the Analytics page rather than faked; add a daily
+  mastery-snapshot table (or derive from `question_attempts` history) when
+  this is prioritized.

@@ -15,8 +15,8 @@ export default async function SignupPage() {
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <h1 className="text-3xl font-bold text-slate-900">FastExams</h1>
-        <p className="text-sm text-slate-600 mt-2">Create your account</p>
+        <h1 className="font-display text-[22px] tracking-[-0.01em] text-ink">FastExams</h1>
+        <p className="mt-2 text-sm text-ink-muted">Create your account</p>
       </div>
       <SignupForm />
     </div>

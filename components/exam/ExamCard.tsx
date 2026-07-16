@@ -1,33 +1,52 @@
+'use client'
+
 import Link from 'next/link'
 import { Exam } from '@/types'
-import { ProgressRing } from '@/components/shared/ProgressRing'
 import { DeleteExamButton } from '@/components/exam/DeleteExamButton'
+import { ActiveToggle } from '@/components/exam/ActiveToggle'
+import { IconChip, MasteryRing, Pill } from '@/components/cadence'
+import { seedAccent } from '@/lib/icons/registry'
 
-export function ExamCard({ exam }: { exam: Exam }) {
-  const formattedDate = new Date(exam.created_at).toLocaleDateString()
+export function ExamCard({
+  exam,
+  mastery,
+  dueCount,
+}: {
+  exam: Exam
+  mastery: number
+  dueCount: number
+}) {
+  const accent = seedAccent(exam.id)
+  const status =
+    mastery >= 100 ? 'mastered' : dueCount > 0 ? 'due' : 'neutral'
+  const statusLabel =
+    mastery >= 100 ? 'mastered' : dueCount > 0 ? `${dueCount} due today` : 'cool · early'
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 hover:shadow-md transition-shadow">
-      <div className="flex justify-between items-start mb-4">
-        <div className="flex-1">
-          <h3 className="text-lg font-semibold text-slate-900">{exam.name}</h3>
-          {exam.description && (
-            <p className="text-sm text-slate-600 mt-1 line-clamp-2">{exam.description}</p>
-          )}
-          <p className="text-xs text-slate-500 mt-2">Created {formattedDate}</p>
+    <Link
+      href={`/exam/${exam.id}`}
+      className="block rounded-card border border-border-hair bg-surface p-4 transition-all duration-150 motion-safe:hover:-translate-y-px hover:border-border-strong"
+    >
+      <div className="mb-3 flex items-start justify-between">
+        <IconChip name={null} accent={accent} />
+        <Pill variant={status as 'due' | 'neutral' | 'mastered'}>{statusLabel}</Pill>
+      </div>
+
+      <h3 className="font-display text-ink">{exam.name}</h3>
+      {exam.description && (
+        <p className="mt-1 line-clamp-2 text-sm text-ink-muted">{exam.description}</p>
+      )}
+
+      <div className="mt-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <MasteryRing pct={mastery} size={36} />
+          <span className="text-sm text-ink-secondary tabular-nums">{mastery}% mastery</span>
         </div>
-        <div className="ml-4 flex items-start gap-1">
-          <ProgressRing percent={0} size={80} strokeWidth={3} />
+        <div className="flex items-center gap-1" onClick={(e) => e.preventDefault()}>
+          <ActiveToggle examId={exam.id} active={exam.active !== false} />
           <DeleteExamButton examId={exam.id} examName={exam.name} />
         </div>
       </div>
-
-      <Link
-        href={`/exam/${exam.id}`}
-        className="inline-block mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
-      >
-        Open
-      </Link>
-    </div>
+    </Link>
   )
 }

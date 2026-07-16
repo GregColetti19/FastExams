@@ -11,7 +11,7 @@ import { ArrowLeft } from 'lucide-react'
 export function BackButton({ href, label = 'Go Back' }: { href?: string; label?: string }) {
   const router = useRouter()
   const className =
-    'inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors mb-4'
+    'inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink-secondary transition-colors duration-150 mb-4'
 
   if (href) {
     return (

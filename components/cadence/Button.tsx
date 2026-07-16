@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
  * - ghost:   hairline border — secondary
  * - subtle:  no border — tertiary / inline
  */
-const button = cva(
+export const button = cva(
   "inline-flex items-center justify-center gap-2 rounded-control text-sm transition-colors duration-tempo disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
   {
     variants: {

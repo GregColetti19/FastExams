@@ -56,8 +56,8 @@ export default async function QuizPage({
 
   if (questions.length === 0) {
     return (
-      <div className="max-w-3xl mx-auto px-4 py-12 text-center">
-        <p className="text-slate-600">
+      <div className="mx-auto max-w-2xl px-4 py-12 text-center">
+        <p className="text-ink-muted">
           {dueOnly ? 'Nothing due for review in this subtopic.' : 'No questions available for this subtopic.'}
         </p>
       </div>
@@ -65,9 +65,9 @@ export default async function QuizPage({
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
-      <BackButton label="Back" />
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">{subtopic.name}</h1>
+    <div className="mx-auto max-w-2xl px-4 py-8">
+      <BackButton href="/review" label="Review" />
+      <h1 className="mb-6 font-display text-[22px] tracking-[-0.01em] text-ink">{subtopic.name}</h1>
       <QuizEngine
         subtopicId={params.subtopicId}
         questionIds={questions.map((q: any) => q.id)}

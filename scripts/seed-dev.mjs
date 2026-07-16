@@ -36,6 +36,13 @@ function mcq(subtopicId, qtext, options, justification, due = false) {
     last_seen_at: null,
     // Half the questions are already due so /review has content.
     next_review_at: due ? '2020-01-01T00:00:00.000Z' : now(),
+    // FSRS defaults (mirror migration 010 / mock/store.ts DEFAULTS) — new card.
+    stability: 0,
+    difficulty: 0,
+    reps: 0,
+    lapses: 0,
+    fsrs_state: 0,
+    learning_steps: 0,
     created_at: now(),
   }
   const opts = options.map((o, i) => ({
@@ -96,6 +103,7 @@ const data = {
         name: 'Cardiology — Demo',
         description: 'Seeded demo exam for local mock mode',
         language: 'en',
+        active: true,
         created_at: now(),
         updated_at: now(),
       },

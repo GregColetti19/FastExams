@@ -19,6 +19,7 @@ const DEFAULTS: Record<string, () => Row> = {
   files: () => ({ processing_status: 'pending', processing_error: null, file_role: 'theory' }),
   subtopics: () => ({ mastery_score: 0, display_order: 0 }),
   topics: () => ({ display_order: 0 }),
+  exams: () => ({ active: true }),
   questions: () => ({
     times_seen: 0,
     times_correct: 0,
@@ -29,6 +30,13 @@ const DEFAULTS: Record<string, () => Row> = {
     question_type: 'mcq',
     ai_confidence: null,
     answer_status: 'ai_answered',
+    // FSRS defaults (mirror migration 010) — new card, all zero.
+    stability: 0,
+    difficulty: 0,
+    reps: 0,
+    lapses: 0,
+    fsrs_state: 0,
+    learning_steps: 0,
   }),
   study_sessions: () => ({ total_questions: 0, correct_count: 0, completed_at: null }),
 }

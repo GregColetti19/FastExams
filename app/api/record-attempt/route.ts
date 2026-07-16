@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient_ } from '@/lib/supabase/server'
-import { calculateNextReview, getMasteryScore } from '@/lib/scheduling/spaced-repetition'
+import { review, binaryGrade, State, type StoredCard } from '@/lib/fsrs'
+import { masteryFromCard } from '@/lib/mastery'
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,25 +49,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Question not found', code: 'NOT_FOUND' }, { status: 404 })
     }
 
-    // Calculate next review
-    const schedule = {
-      timesCorrect: question.times_correct,
-      timesSeen: question.times_seen,
-      currentIntervalDays: question.current_interval_days,
-      lastSeenAt: question.last_seen_at ? new Date(question.last_seen_at) : null,
+    // FSRS scheduling — rehydrate the persisted card, apply the grade, persist the result.
+    const priorCard: StoredCard = {
+      due: new Date(question.next_review_at),
+      stability: question.stability ?? 0,
+      difficulty: question.difficulty ?? 0,
+      reps: question.reps ?? 0,
+      lapses: question.lapses ?? 0,
+      state: (question.fsrs_state ?? State.New) as State,
+      learning_steps: question.learning_steps ?? 0,
+      last_review: question.last_seen_at ? new Date(question.last_seen_at) : null,
     }
+    const grade = binaryGrade(isCorrect)
+    const nextCard = review(priorCard, grade)
 
-    const update = calculateNextReview(schedule, isCorrect)
-
-    // Update question scheduling
+    // Update question scheduling (both FSRS state and the legacy SM-2 counters,
+    // which other pages/queries still read from until the routing pass migrates them).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase.from('questions') as any)
       .update({
-        times_seen: update.timesSeen,
-        times_correct: update.timesCorrect,
-        current_interval_days: update.currentIntervalDays,
+        times_seen: question.times_seen + 1,
+        times_correct: isCorrect ? question.times_correct + 1 : question.times_correct,
         last_seen_at: new Date().toISOString(),
-        next_review_at: update.nextReviewAt.toISOString(),
+        next_review_at: nextCard.due.toISOString(),
+        stability: nextCard.stability,
+        difficulty: nextCard.difficulty,
+        reps: nextCard.reps,
+        lapses: nextCard.lapses,
+        fsrs_state: nextCard.state,
+        learning_steps: nextCard.learning_steps,
       })
       .eq('id', questionId)
 
@@ -91,19 +102,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Recalculate subtopic mastery across ALL its questions (not just this one).
-    // Uses the per-question times_seen/times_correct counters, which were just
-    // updated above for this question.
+    // Recalculate subtopic mastery across ALL its questions (not just this one),
+    // averaging each question's FSRS-stability-derived mastery.
+    let masteryScore = masteryFromCard(nextCard)
     if (question.subtopic_id) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: subtopicQuestions } = await (supabase.from('questions') as any)
-        .select('times_seen, times_correct')
+        .select('id, stability, fsrs_state')
         .eq('subtopic_id', question.subtopic_id) as any
 
       if (subtopicQuestions && subtopicQuestions.length > 0) {
-        const totalSeen = subtopicQuestions.reduce((s: number, q: any) => s + (q.times_seen || 0), 0)
-        const totalCorrect = subtopicQuestions.reduce((s: number, q: any) => s + (q.times_correct || 0), 0)
-        const masteryScore = getMasteryScore(totalCorrect, totalSeen)
+        const scores = subtopicQuestions.map((q: any) =>
+          q.id === questionId
+            ? masteryFromCard(nextCard)
+            : masteryFromCard({ stability: q.stability ?? 0, state: q.fsrs_state ?? State.New })
+        )
+        masteryScore = Math.round(scores.reduce((s: number, v: number) => s + v, 0) / scores.length)
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (supabase.from('subtopics') as any)
@@ -115,9 +129,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        nextReviewAt: update.nextReviewAt,
-        intervalDays: update.currentIntervalDays,
-        masteryScore: getMasteryScore(update.timesCorrect, update.timesSeen),
+        nextReviewAt: nextCard.due,
+        stability: nextCard.stability,
+        masteryScore,
       },
       { status: 200 }
     )

@@ -1,89 +1,139 @@
-import { redirect } from 'next/navigation'
-import Link from 'next/link'
-import { createServerClient_ } from '@/lib/supabase/server'
-import { BackButton } from '@/components/shared/BackButton'
+import Link from "next/link";
+import { IconFlame, IconChevronRight } from "@tabler/icons-react";
+import { createServerClient_ } from "@/lib/supabase/server";
+import { seedAccent } from "@/lib/icons/registry";
+import {
+  buildReviewGroups,
+  buildHorizon,
+  dueTodayCount,
+  minutesToGo,
+} from "@/lib/review/queue";
+import { MasteryBar, Pill } from "@/components/cadence";
+import { ReviewHorizon } from "@/components/cadence/ReviewHorizon";
+import { masteryLabel } from "@/lib/mastery";
+import type { Exam, Topic, Subtopic, Question } from "@/types";
+
+export const dynamic = "force-dynamic";
+
+const HORIZON_DAYS = 10;
 
 export default async function ReviewPage() {
-  const supabase = await createServerClient_()
+  const supabase = await createServerClient_();
 
-  // Dev mode: skip auth
+  // Flat fetches (mock DB has no nested relational selects); joined in queue.ts.
+  const [{ data: exams }, { data: topics }, { data: subtopics }, { data: questions }] =
+    await Promise.all([
+      supabase.from("exams").select("*"),
+      supabase.from("topics").select("*"),
+      supabase.from("subtopics").select("*"),
+      supabase.from("questions").select("*"),
+    ]);
 
-  // Fetch due questions, then resolve subtopic/topic names separately (the mock
-  // DB doesn't support nested relational selects). Exclude flashcards and
-  // AI-unanswerable questions — they aren't quizzable.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: rawDue } = await (supabase
-    .from('questions')
-    .select('*')
-    .lte('next_review_at', new Date().toISOString())) as any
+  const E = (exams ?? []) as Exam[];
+  const T = (topics ?? []) as Topic[];
+  const S = (subtopics ?? []) as Subtopic[];
+  const Q = (questions ?? []) as Question[];
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: allSubtopics } = await (supabase.from('subtopics').select('*')) as any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: allTopics } = await (supabase.from('topics').select('*')) as any
-  const subById = new Map((allSubtopics || []).map((s: any) => [s.id, s]))
-  const topicById = new Map((allTopics || []).map((t: any) => [t.id, t]))
-
-  const dueQuestions = ((rawDue || []) as any[])
-    .filter((q) => q.question_type !== 'flashcard' && q.answer_status !== 'unanswerable')
-    .map((q) => {
-      const sub: any = subById.get(q.subtopic_id)
-      const topic: any = sub ? topicById.get(sub.topic_id) : undefined
-      return { ...q, subtopic: { name: sub?.name ?? 'Unknown', topic: { name: topic?.name ?? '' } } }
-    })
-
-  if (!dueQuestions || dueQuestions.length === 0) {
-    return (
-      <div className="max-w-3xl mx-auto px-4 py-12 text-center">
-        <p className="text-slate-600 mb-4">No questions due for review right now.</p>
-        <Link href="/dashboard" className="text-blue-600 hover:underline">
-          Back to Dashboard
-        </Link>
-      </div>
-    )
-  }
-
-  // Group by subtopic
-  const groupedBySubtopic: Record<string, any[]> = {}
-  dueQuestions.forEach((q: any) => {
-    const subtopicId = q.subtopic_id
-    if (!groupedBySubtopic[subtopicId]) {
-      groupedBySubtopic[subtopicId] = []
-    }
-    groupedBySubtopic[subtopicId].push(q)
-  })
+  const groups = buildReviewGroups(E, T, S, Q, seedAccent);
+  const horizon = buildHorizon(E, T, S, Q, HORIZON_DAYS);
+  const due = dueTodayCount(groups);
+  const mins = minutesToGo(due);
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
-      <BackButton href="/dashboard" label="Dashboard" />
-      <h1 className="text-3xl font-bold text-slate-900 mb-2">Review Queue</h1>
-      <p className="text-slate-600 mb-6">{dueQuestions.length} questions due for review</p>
+    <div className="mx-auto max-w-2xl px-4 py-8">
+      {/* Header */}
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h1 className="font-display text-[22px] tracking-[-0.01em] text-ink">Review</h1>
+          <p className="text-sm text-ink-muted">Your spaced-repetition queue for today</p>
+        </div>
+        <span className="inline-flex items-center gap-1.5 rounded-pill bg-coral/15 px-2.5 py-1 text-xs text-coral-soft">
+          <IconFlame size={14} stroke={1.75} /> on a roll
+        </span>
+      </div>
 
-      <div className="space-y-4">
-        {Object.entries(groupedBySubtopic).map(([subtopicId, questions]: [string, any[]]) => {
-          const subtopic = questions[0].subtopic
-          return (
-            <div key={subtopicId} className="bg-white rounded-lg shadow p-6">
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <p className="text-sm text-slate-500">{subtopic.topic.name}</p>
-                  <h3 className="text-lg font-semibold text-slate-900">{subtopic.name}</h3>
-                </div>
-                <span className="inline-block px-3 py-1 bg-blue-100 text-blue-700 text-sm rounded">
-                  {questions.length}
-                </span>
-              </div>
-
-              <Link
-                href={`/quiz/${subtopicId}?due=1`}
-                className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
-              >
-                Start Review
-              </Link>
+      {due === 0 ? (
+        <CaughtUp horizon={horizon} />
+      ) : (
+        <>
+          {/* Hero */}
+          <div className="mb-4 rounded-card border border-border-hair bg-surface p-5">
+            <p className="font-display text-[34px] leading-none tracking-[-0.01em] text-ink">
+              {due} <span className="text-[18px] text-ink-muted">cards left today</span>
+            </p>
+            <p className="mt-2 text-sm text-ink-muted">
+              ~{mins} min to go
+            </p>
+            <div className="mt-4 h-1.5 w-full overflow-hidden rounded-pill bg-surface-inset">
+              <div className="h-full rounded-pill bg-coral" style={{ width: "8%" }} />
             </div>
-          )
-        })}
+            <Link
+              href={`/quiz/${groups[0].subtopicId}?due=1`}
+              className="mt-4 inline-flex h-11 items-center justify-center rounded-control bg-coral px-6 font-display text-white transition-colors duration-tempo hover:bg-coral-deep"
+            >
+              Continue review
+            </Link>
+          </div>
+
+          {/* Return horizon */}
+          <div className="mb-6 rounded-card border border-border-hair bg-surface p-5">
+            <p className="mb-3 text-sm text-ink-secondary">Return horizon</p>
+            <ReviewHorizon days={horizon} />
+          </div>
+
+          {/* Due now, grouped */}
+          <p className="mb-3 text-xs uppercase tracking-wide text-ink-muted">
+            due now · grouped by topic
+          </p>
+          <div className="space-y-2">
+            {groups.map((g) => {
+              const label = masteryLabel(g.mastery);
+              return (
+                <Link
+                  key={g.subtopicId}
+                  href={`/quiz/${g.subtopicId}?due=1`}
+                  className="flex items-center gap-3 rounded-card border border-border-hair bg-surface p-4 transition-all duration-150 motion-safe:hover:-translate-y-px hover:border-border-strong"
+                >
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: g.accent }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-display text-ink">{g.subtopicName}</p>
+                    <p className="truncate text-xs text-ink-muted">
+                      {g.examName} · {g.whyNow}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <MasteryBar pct={g.mastery} className="max-w-[120px]" />
+                      {label && <span className="text-[11px] text-ink-muted">{label}</span>}
+                    </div>
+                  </div>
+                  <Pill variant="due">{g.dueCount} due</Pill>
+                  <IconChevronRight size={16} className="shrink-0 text-ink-muted" />
+                </Link>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Caught-up state (§8.2): calm, affirming, shows the horizon so it feels earned. */
+function CaughtUp({ horizon }: { horizon: ReturnType<typeof buildHorizon> }) {
+  const tomorrow = horizon[1]?.count ?? 0;
+  return (
+    <div className="rounded-card border border-border-hair bg-surface p-8 text-center">
+      <p className="font-display text-[22px] text-ink">You&apos;re caught up.</p>
+      <p className="mt-2 text-sm text-ink-muted">
+        {tomorrow > 0
+          ? `${tomorrow} cards return tomorrow — the loop keeps going.`
+          : "Nothing due right now. Enjoy the breather."}
+      </p>
+      <div className="mx-auto mt-6 max-w-md text-left">
+        <ReviewHorizon days={horizon} />
       </div>
     </div>
-  )
+  );
 }

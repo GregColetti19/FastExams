@@ -40,6 +40,8 @@ export interface Exam {
   name: string;
   description: string | null;
   language: string | null;
+  /** Only active exams feed the Review queue / landing (Cadence). */
+  active: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -108,6 +110,14 @@ export interface Question {
   current_interval_days: number;
   last_seen_at: string | null;
   next_review_at: string;
+  // FSRS memory state (Cadence). See lib/fsrs.ts StoredCard.
+  stability: number;
+  difficulty: number;
+  reps: number;
+  lapses: number;
+  /** FSRS State enum: 0=New 1=Learning 2=Review 3=Relearning */
+  fsrs_state: number;
+  learning_steps: number;
   created_at: string;
 }
 

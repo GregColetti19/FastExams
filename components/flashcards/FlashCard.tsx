@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-
+import { Button } from '@/components/cadence/Button'
 
 interface FlashCardProps {
   front: string
@@ -15,16 +15,14 @@ export function FlashCard({ front, back, onGotIt, onMissedIt }: FlashCardProps) 
 
   return (
     <div className="space-y-6">
-      {/* Card */}
+      {/* Card — 250ms 3D flip per Cadence motion spec */}
       <div
-        className="h-64 cursor-pointer perspective"
+        className="h-64 cursor-pointer"
         onClick={() => setFlipped(!flipped)}
-        style={{
-          perspective: '1000px',
-        }}
+        style={{ perspective: '1000px' }}
       >
         <div
-          className="relative w-full h-full transition-transform duration-500"
+          className="motion-safe:transition-transform motion-safe:duration-[250ms] relative h-full w-full"
           style={{
             transformStyle: 'preserve-3d',
             transform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)',
@@ -32,49 +30,43 @@ export function FlashCard({ front, back, onGotIt, onMissedIt }: FlashCardProps) 
         >
           {/* Front */}
           <div
-            className="absolute w-full h-full bg-white rounded-lg shadow-lg p-8 flex items-center justify-center text-center border-2 border-blue-200"
-            style={{
-              backfaceVisibility: 'hidden',
-            }}
+            className="absolute flex h-full w-full items-center justify-center rounded-card border border-border-hair bg-surface p-8 text-center"
+            style={{ backfaceVisibility: 'hidden' }}
           >
             <div>
-              <p className="text-sm text-slate-500 mb-2">Question</p>
-              <p className="text-xl font-semibold text-slate-900">{front}</p>
-              <p className="text-xs text-slate-400 mt-4">Click to reveal answer</p>
+              <p className="mb-2 text-[11px] uppercase tracking-wide text-ink-muted">prompt</p>
+              <p className="font-display text-xl text-ink">{front}</p>
+              <p className="mt-4 text-xs text-ink-muted">Click to reveal answer</p>
             </div>
           </div>
 
           {/* Back */}
           <div
-            className="absolute w-full h-full bg-gradient-to-br from-green-50 to-blue-50 rounded-lg shadow-lg p-8 flex items-center justify-center text-center border-2 border-green-200"
-            style={{
-              backfaceVisibility: 'hidden',
-              transform: 'rotateY(180deg)',
-            }}
+            className="absolute flex h-full w-full items-center justify-center rounded-card border border-teal-700/30 bg-teal-800/10 p-8 text-center"
+            style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
           >
             <div>
-              <p className="text-sm text-slate-500 mb-2">Answer</p>
-              <p className="text-lg text-slate-900">{back}</p>
+              <p className="mb-2 text-[11px] uppercase tracking-wide text-ink-muted">answer</p>
+              <p className="text-lg text-ink">{back}</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Buttons — only show after flipped */}
+      {/* Rating — binary default (§8.5): Again / Got it */}
       {flipped && (
         <div className="flex gap-3">
-          <button
-            onClick={onGotIt}
-            className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
-          >
-            ✓ Got it
-          </button>
-          <button
+          <Button
+            variant="ghost"
+            size="lg"
+            className="flex-1 border-coral/50 text-coral-soft hover:border-coral"
             onClick={onMissedIt}
-            className="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
           >
-            ✗ Missed it
-          </button>
+            Again
+          </Button>
+          <Button variant="confirm" size="lg" className="flex-1" onClick={onGotIt}>
+            Got it
+          </Button>
         </div>
       )}
     </div>

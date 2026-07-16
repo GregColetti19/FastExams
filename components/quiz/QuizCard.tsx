@@ -1,7 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { IconCheck, IconX, IconAlertTriangle } from '@tabler/icons-react'
 import { Question, QuestionOption } from '@/types'
+import { Button } from '@/components/cadence/Button'
+import { OriginBadge } from '@/components/cadence/OriginBadge'
+import { cn } from '@/lib/utils'
 
 interface QuizCardProps {
   question: Question
@@ -19,6 +23,31 @@ export function QuizCard({ question, options, onAnswer, onContinue, onBack, canG
   const [loading, setLoading] = useState(false)
   const [startTime] = useState(Date.now())
   const [countdown, setCountdown] = useState<number | null>(null)
+  const [overriding, setOverriding] = useState(false)
+  const [overrideSaving, setOverrideSaving] = useState(false)
+  const [localOptions, setLocalOptions] = useState(options)
+
+  useEffect(() => {
+    setLocalOptions(options)
+    setOverriding(false)
+  }, [options])
+
+  const handleOverride = async (correctOptionId: string) => {
+    setOverrideSaving(true)
+    try {
+      await fetch('/api/override-answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questionId: question.id, correctOptionId }),
+      })
+      setLocalOptions((prev) => prev.map((o) => ({ ...o, is_correct: o.id === correctOptionId })))
+      setOverriding(false)
+    } catch (error) {
+      console.error('Error overriding answer:', error)
+    } finally {
+      setOverrideSaving(false)
+    }
+  }
 
   // Stable ref so the auto-advance timer always calls the latest onContinue
   // without being in the effect dep array (which caused timer-cancel loops).
@@ -28,8 +57,10 @@ export function QuizCard({ question, options, onAnswer, onContinue, onBack, canG
   const countdownRef = useRef<NodeJS.Timeout | null>(null)
 
   // Auto-advance 2s after a correct answer, with visible countdown.
+  // Skipped/cancelled while the answer-override picker is open — the user
+  // opened it to correct the answer, not to move on.
   useEffect(() => {
-    if (!answered || !isCorrect) return
+    if (!answered || !isCorrect || overriding) return
     setCountdown(2)
     countdownRef.current = setInterval(() => {
       setCountdown((c) => {
@@ -48,12 +79,12 @@ export function QuizCard({ question, options, onAnswer, onContinue, onBack, canG
       clearInterval(countdownRef.current!)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answered, isCorrect])
+  }, [answered, isCorrect, overriding])
 
   const handleSelectOption = async (optionId: string) => {
     if (answered || loading) return
     setLoading(true)
-    const correctOption = options.find((o) => o.is_correct)
+    const correctOption = localOptions.find((o) => o.is_correct)
     const correct = optionId === correctOption?.id
     setSelectedOptionId(optionId)
     setIsCorrect(correct)
@@ -68,55 +99,69 @@ export function QuizCard({ question, options, onAnswer, onContinue, onBack, canG
     }
   }
 
-  const correctOption = options.find((o) => o.is_correct)
+  const correctOption = localOptions.find((o) => o.is_correct)
+  const isPastExam = question.source === 'past_exam'
+  const isAiAnswered = isPastExam && question.answer_status === 'ai_answered' && question.ai_confidence != null
+  const isUnanswerable = isPastExam && question.answer_status === 'unanswerable'
+  const lowConfidence = isAiAnswered && (question.ai_confidence as number) < 0.6
 
   return (
     <div className="space-y-4">
-      {question.source === 'past_exam' && question.past_exam_year && (
-        <div className="inline-block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full border border-blue-300">
-          Past Exam {question.past_exam_year}
-        </div>
-      )}
+      <div className="flex items-center gap-3 flex-wrap">
+        <OriginBadge
+          origin={isPastExam ? 'pastExam' : 'ai'}
+          year={question.past_exam_year ?? undefined}
+          lowConfidence={lowConfidence}
+        />
+        {isAiAnswered && (
+          <span className="text-xs text-ink-muted">
+            {Math.round((question.ai_confidence as number) * 100)}% confidence
+          </span>
+        )}
+        {isUnanswerable && (
+          <span className="inline-flex items-center gap-1 rounded-pill bg-coral/15 px-2.5 py-0.5 text-xs text-coral-soft">
+            <IconAlertTriangle size={12} stroke={2} /> unverified — needs review
+          </span>
+        )}
+        {question.answer_status === 'user_set' && (
+          <span className="text-xs text-ink-muted">user-corrected</span>
+        )}
+      </div>
 
       {/* Question */}
-      <div className="bg-white rounded-xl shadow-md border border-slate-200 p-6">
-        <h2 className="text-lg font-semibold text-slate-900 leading-snug mb-5">
+      <div className="rounded-card border border-border-hair bg-surface p-6">
+        <h2 className="font-display text-[17px] leading-[1.5] text-ink mb-5">
           {question.question_text}
         </h2>
 
         {question.image_storage_path && (
-          <div className="mb-5 p-4 bg-slate-100 rounded-lg text-center text-slate-500 text-sm">
+          <div className="mb-5 rounded-control bg-surface-inset p-4 text-center text-sm text-ink-muted">
             [Image: {question.image_storage_path}]
           </div>
         )}
 
         {/* Options */}
         <div className="space-y-2">
-          {options.map((option) => {
+          {localOptions.map((option) => {
             const isSelected = option.id === selectedOptionId
             const isRight = option.id === correctOption?.id
-
-            let cls = 'w-full p-4 text-left border-2 rounded-lg transition-all font-medium '
-            if (!answered) {
-              cls += 'border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50 cursor-pointer'
-            } else if (isRight) {
-              cls += 'border-green-500 bg-green-50 text-green-900 cursor-default'
-            } else if (isSelected && !isCorrect) {
-              cls += 'border-red-500 bg-red-50 text-red-900 cursor-default'
-            } else {
-              cls += 'border-slate-200 bg-slate-50 text-slate-500 cursor-default'
-            }
 
             return (
               <button
                 key={option.id}
                 onClick={() => handleSelectOption(option.id)}
                 disabled={answered || loading}
-                className={cls}
+                className={cn(
+                  'w-full rounded-control border p-4 text-left text-[15px] transition-colors duration-150',
+                  !answered && 'border-border-hair bg-surface text-ink hover:border-border-strong cursor-pointer',
+                  answered && isRight && 'border-teal-700 bg-teal-800/10 text-ink cursor-default',
+                  answered && isSelected && !isCorrect && 'border-border-strong bg-surface-inset text-ink-secondary cursor-default',
+                  answered && !isRight && !isSelected && 'border-border-hair bg-surface text-ink-muted cursor-default'
+                )}
               >
                 <span className="flex items-center gap-3">
-                  {answered && isRight && <span className="text-green-600">✓</span>}
-                  {answered && isSelected && !isCorrect && <span className="text-red-600">✗</span>}
+                  {answered && isRight && <IconCheck size={16} className="text-teal-200 shrink-0" />}
+                  {answered && isSelected && !isCorrect && <IconX size={16} className="text-ink-muted shrink-0" />}
                   <span>{option.option_text}</span>
                 </span>
               </button>
@@ -127,40 +172,81 @@ export function QuizCard({ question, options, onAnswer, onContinue, onBack, canG
 
       {/* Feedback */}
       {answered && (
-        <div className={`rounded-xl border p-4 ${isCorrect ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}>
+        <div
+          className={cn(
+            'rounded-card border p-4',
+            isCorrect ? 'border-teal-700/40 bg-teal-800/10' : 'border-border-hair bg-surface-inset'
+          )}
+        >
           {isCorrect ? (
             <div className="flex items-center justify-between">
-              <span className="text-green-800 font-semibold">✓ Correct!</span>
+              <span className="flex items-center gap-1.5 font-display text-teal-100">
+                <IconCheck size={16} /> Correct
+              </span>
               <div className="flex items-center gap-3">
                 {countdown !== null && (
-                  <span className="text-sm text-green-600">Next in {countdown}s…</span>
+                  <span className="text-sm text-ink-muted tabular-nums">Next in {countdown}s…</span>
                 )}
-                <button
+                <Button
+                  variant="confirm"
+                  size="sm"
                   onClick={() => {
                     clearTimeout(timerRef.current!)
                     clearInterval(countdownRef.current!)
                     onContinueRef.current?.()
                   }}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-sm"
                 >
-                  Next →
-                </button>
+                  Next
+                </Button>
               </div>
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="text-red-800 font-semibold">✗ Incorrect</div>
+              <div className="font-display text-ink-secondary">Not quite</div>
               {question.justification && (
-                <div className="bg-white rounded-lg p-3 border border-red-200">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Explanation</p>
-                  <p className="text-sm text-slate-800">{question.justification}</p>
+                <div className="rounded-control border border-border-hair bg-surface p-3">
+                  <p className="mb-1 text-[11px] text-ink-muted">explanation</p>
+                  <p className="text-sm text-ink-secondary">{question.justification}</p>
                 </div>
               )}
+              <Button variant="primary" className="w-full" onClick={onContinue}>
+                Next
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Answer override — past-exam answers are AI-inferred, let the user correct them */}
+      {answered && isPastExam && question.answer_status !== 'user_set' && (
+        <div className="text-sm">
+          {!overriding ? (
+            <button
+              onClick={() => setOverriding(true)}
+              className="text-ink-muted hover:text-ink-secondary underline"
+            >
+              Think this answer is wrong? Correct it
+            </button>
+          ) : (
+            <div className="rounded-control border border-border-hair bg-surface-inset p-3 space-y-2">
+              <p className="text-xs text-ink-secondary">Select the correct option:</p>
+              <div className="flex flex-wrap gap-2">
+                {localOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    disabled={overrideSaving}
+                    onClick={() => handleOverride(option.id)}
+                    className="rounded-control border border-border-hair bg-surface px-3 py-1.5 text-sm text-ink hover:border-border-strong disabled:opacity-50"
+                  >
+                    {option.option_text}
+                  </button>
+                ))}
+              </div>
               <button
-                onClick={onContinue}
-                className="w-full mt-1 px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 font-medium"
+                onClick={() => setOverriding(false)}
+                className="text-xs text-ink-muted hover:text-ink-secondary"
               >
-                Continue →
+                Cancel
               </button>
             </div>
           )}
@@ -171,7 +257,7 @@ export function QuizCard({ question, options, onAnswer, onContinue, onBack, canG
       {canGoBack && !answered && (
         <button
           onClick={onBack}
-          className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1"
+          className="flex items-center gap-1 text-sm text-ink-muted hover:text-ink-secondary"
         >
           ← Previous question
         </button>

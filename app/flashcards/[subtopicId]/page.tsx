@@ -25,9 +25,11 @@ export default async function FlashcardsPage({ params }: { params: { subtopicId:
   const examId = (topic as any)?.exam_id ?? ''
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
-      <BackButton label="Back" href={examId ? `/exam/${examId}` : '/dashboard'} />
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">Flashcards: {subtopic.name}</h1>
+    <div className="mx-auto max-w-2xl px-4 py-8">
+      <BackButton label="Exam" href={examId ? `/exam/${examId}` : '/dashboard'} />
+      <h1 className="mb-6 font-display text-[22px] tracking-[-0.01em] text-ink">
+        Flashcards: {subtopic.name}
+      </h1>
       <FlashcardEngine subtopicId={params.subtopicId} examId={examId} />
     </div>
   )

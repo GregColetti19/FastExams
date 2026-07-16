@@ -15,24 +15,25 @@ export default function Error({
   }, [error])
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
-      <div className="text-center max-w-md">
-        <h2 className="text-3xl font-bold text-red-600 mb-4">Something went wrong</h2>
-        <p className="text-slate-600 mb-2">{error.message || 'An unexpected error occurred.'}</p>
+    <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
+      <div className="max-w-md text-center">
+        <h2 className="mb-4 font-display text-[22px] text-coral">Something went wrong</h2>
+        <p className="mb-2 text-sm text-ink-secondary">{error.message || 'An unexpected error occurred.'}</p>
         {error.digest && (
-          <p className="text-xs text-slate-400 font-mono mb-6">
-            Ref: {error.digest}
-          </p>
+          <p className="mb-6 font-mono text-xs text-ink-muted">Ref: {error.digest}</p>
         )}
 
         <div className="flex gap-3">
           <button
             onClick={() => reset()}
-            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="flex-1 rounded-control bg-coral px-4 py-2 font-display text-white transition-colors duration-tempo hover:bg-coral-deep"
           >
             Try again
           </button>
-          <Link href="/dashboard" className="flex-1 px-4 py-2 bg-slate-200 text-slate-900 rounded-lg hover:bg-slate-300 text-center">
+          <Link
+            href="/review"
+            className="flex-1 rounded-control border border-border-hair px-4 py-2 text-center text-ink-secondary transition-colors duration-150 hover:border-border-strong"
+          >
             Home
           </Link>
         </div>

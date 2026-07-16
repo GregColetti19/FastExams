@@ -1,7 +1,7 @@
-'use client'
-
 import Link from 'next/link'
 import { Topic, Subtopic } from '@/types'
+import { MasteryBar, button } from '@/components/cadence'
+import { masteryLabel } from '@/lib/mastery'
 
 interface TopicWithSubtopics extends Topic {
   subtopics: Subtopic[]
@@ -9,24 +9,27 @@ interface TopicWithSubtopics extends Topic {
 
 export function TopicGrid({
   topics,
+  dueInDays,
 }: {
   topics: TopicWithSubtopics[]
+  /** subtopicId -> days until next due (0 = due today, null = nothing scheduled) */
+  dueInDays: Record<string, number | null>
   examId?: string
 }) {
   return (
     <div className="space-y-6">
       {topics.map((topic) => (
-        <div key={topic.id} className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
-          <h2 className="text-xl font-semibold text-slate-900 mb-4">{topic.name}</h2>
+        <div key={topic.id}>
+          <p className="mb-3 font-display text-[16px] text-ink">{topic.name}</p>
 
           {topic.subtopics && topic.subtopics.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {topic.subtopics.map((subtopic) => (
-                <SubtopicCard key={subtopic.id} subtopic={subtopic} />
+                <SubtopicCard key={subtopic.id} subtopic={subtopic} dueIn={dueInDays[subtopic.id] ?? null} />
               ))}
             </div>
           ) : (
-            <p className="text-sm text-slate-600">No subtopics yet</p>
+            <p className="text-sm text-ink-muted">No subtopics yet</p>
           )}
         </div>
       ))}
@@ -34,45 +37,29 @@ export function TopicGrid({
   )
 }
 
-function SubtopicCard({ subtopic }: { subtopic: Subtopic }) {
-  const getMasteryColor = (score: number) => {
-    if (score >= 80) return 'bg-green-50 border-green-300'
-    if (score >= 50) return 'bg-yellow-50 border-yellow-300'
-    return 'bg-red-50 border-red-300'
-  }
-
-  const getMasteryTextColor = (score: number) => {
-    if (score >= 80) return 'text-green-900'
-    if (score >= 50) return 'text-yellow-900'
-    return 'text-red-900'
-  }
+function SubtopicCard({ subtopic, dueIn }: { subtopic: Subtopic; dueIn: number | null }) {
+  const pct = Math.round(subtopic.mastery_score)
+  const label = masteryLabel(pct)
+  const dueText = dueIn === null ? 'nothing scheduled' : dueIn <= 0 ? 'due today' : `next due in ${dueIn}d`
 
   return (
-    <div
-      className={`rounded-lg border-2 p-4 ${getMasteryColor(
-        subtopic.mastery_score
-      )}`}
-    >
-      <h3 className="font-medium text-slate-900">{subtopic.name}</h3>
+    <div className="rounded-card border border-border-hair bg-surface p-4">
+      <h3 className="font-display text-ink">{subtopic.name}</h3>
+      <p className="mt-0.5 text-xs text-ink-muted">{dueText}</p>
 
-      <div className="mt-3 flex items-center justify-between">
-        <span className={`text-sm font-medium ${getMasteryTextColor(subtopic.mastery_score)}`}>
-          {Math.round(subtopic.mastery_score)}% mastery
-        </span>
+      <div className="mt-3 flex items-center gap-2">
+        <MasteryBar pct={pct} className="max-w-[100px]" />
+        <span className="text-xs text-ink-secondary tabular-nums">{pct}%</span>
+        {label && <span className="text-[11px] text-ink-muted">{label}</span>}
       </div>
 
+      {/* Two launchers — the exception to "no buttons" (§8.3) */}
       <div className="mt-4 flex gap-2">
-        <Link
-          href={`/quiz/${subtopic.id}`}
-          className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 text-center"
-        >
+        <Link href={`/quiz/${subtopic.id}`} className={button({ variant: 'ghost', size: 'sm', className: 'flex-1' })}>
           Quiz
         </Link>
-        <Link
-          href={`/flashcards/${subtopic.id}`}
-          className="flex-1 px-3 py-2 bg-slate-200 text-slate-900 text-sm rounded hover:bg-slate-300 text-center"
-        >
-          Flashcards
+        <Link href={`/flashcards/${subtopic.id}`} className={button({ variant: 'ghost', size: 'sm', className: 'flex-1' })}>
+          Cards
         </Link>
       </div>
     </div>

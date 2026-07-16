@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
+import { Sun, Moon } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { useTheme, useThemeToggle } from '@/components/cadence'
 
 export function Navbar() {
   const [user, setUser] = useState<{ email?: string } | null>(null)
@@ -12,6 +14,8 @@ export function Navbar() {
   const router = useRouter()
   const pathname = usePathname()
   const supabase = createClient()
+  const theme = useTheme()
+  const toggleTheme = useThemeToggle()
 
   useEffect(() => {
     const checkUser = async () => {
@@ -53,33 +57,39 @@ export function Navbar() {
   }
 
   return (
-    <nav className="bg-white border-b border-slate-200">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
+    <nav className="border-b border-border-hair bg-surface">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+        <div className="flex h-16 items-center justify-between">
           <div className="flex items-center gap-8">
-            <Link href="/dashboard" className="text-lg font-bold text-slate-900">
+            <Link href="/review" className="font-display text-[16px] text-ink">
               FastExams
             </Link>
-            <div className="hidden md:flex gap-1 items-center">
+            <div className="hidden items-center gap-1 md:flex">
               <NavLink href="/dashboard" label="Dashboard" pathname={pathname} />
               <div className="relative">
                 <NavLink href="/review" label="Review" pathname={pathname} />
                 {dueCount > 0 && (
-                  <span className="absolute -top-2 -right-2 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full">
+                  <span className="absolute -top-1.5 -right-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-pill bg-coral px-1 text-[10px] text-white tabular-nums">
                     {dueCount}
                   </span>
                 )}
               </div>
+              <NavLink href="/analytics" label="Analytics" pathname={pathname} />
             </div>
           </div>
 
           <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-600">{user?.email || 'dev@example.com'}</span>
+            <button
+              onClick={toggleTheme}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="rounded-control p-2 text-ink-muted transition-colors hover:bg-surface-inset hover:text-ink-secondary"
+            >
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+            <span className="text-sm text-ink-muted">{user?.email || 'dev@example.com'}</span>
             {user && (
-              <button
-                onClick={handleSignOut}
-                className="text-sm text-blue-600 hover:text-blue-700"
-              >
+              <button onClick={handleSignOut} className="text-sm text-ink-muted hover:text-ink-secondary">
                 Sign out
               </button>
             )}
@@ -103,10 +113,8 @@ function NavLink({
   return (
     <Link
       href={href}
-      className={`px-3 py-2 rounded-md text-sm font-medium ${
-        isActive
-          ? 'bg-blue-50 text-blue-600'
-          : 'text-slate-600 hover:bg-slate-50'
+      className={`rounded-control px-3 py-2 text-sm transition-colors duration-150 ${
+        isActive ? 'bg-surface-inset text-ink' : 'text-ink-muted hover:bg-surface-inset'
       }`}
     >
       {label}

@@ -2,19 +2,14 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-
-const Button = ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
-  <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50" {...props}>
-    {children}
-  </button>
-);
+import { Button } from '@/components/cadence/Button'
 
 const Input = (props: React.InputHTMLAttributes<HTMLInputElement>) => (
   <input
-    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+    className="w-full rounded-control border border-border-hair bg-canvas px-3 py-2 text-sm text-ink placeholder:text-ink-muted focus:outline-none focus:ring-2 focus:ring-border-strong"
     {...props}
   />
-);
+)
 
 export function SignupForm() {
   const [email, setEmail] = useState('')
@@ -57,9 +52,9 @@ export function SignupForm() {
 
   if (success) {
     return (
-      <div className="bg-green-50 border border-green-200 rounded-lg p-6 text-center">
-        <p className="text-green-800 font-medium">Check your email</p>
-        <p className="text-sm text-green-700 mt-2">
+      <div className="rounded-card border border-teal-700/30 bg-teal-800/10 p-6 text-center">
+        <p className="text-teal-100">Check your email</p>
+        <p className="mt-2 text-sm text-ink-secondary">
           We&apos;ve sent you a confirmation link. Please check your inbox to verify your account.
         </p>
       </div>
@@ -67,9 +62,9 @@ export function SignupForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 bg-white p-6 rounded-lg shadow">
+    <form onSubmit={handleSubmit} className="space-y-4 rounded-card border border-border-hair bg-surface p-6">
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-2">Email</label>
+        <label className="mb-2 block text-sm text-ink-secondary">Email</label>
         <Input
           type="email"
           value={email}
@@ -81,7 +76,7 @@ export function SignupForm() {
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-2">Password</label>
+        <label className="mb-2 block text-sm text-ink-secondary">Password</label>
         <Input
           type="password"
           value={password}
@@ -93,7 +88,7 @@ export function SignupForm() {
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-2">Confirm Password</label>
+        <label className="mb-2 block text-sm text-ink-secondary">Confirm password</label>
         <Input
           type="password"
           value={confirmPassword}
@@ -104,19 +99,15 @@ export function SignupForm() {
         />
       </div>
 
-      {error && <div className="text-sm text-red-600 bg-red-50 p-3 rounded">{error}</div>}
+      {error && <div className="rounded-control bg-coral/10 p-3 text-sm text-coral-soft">{error}</div>}
 
-      <Button
-        type="submit"
-        disabled={loading}
-        className="w-full"
-      >
-        {loading ? 'Creating account...' : 'Create account'}
+      <Button type="submit" variant="primary" disabled={loading} className="w-full">
+        {loading ? 'Creating account…' : 'Create account'}
       </Button>
 
-      <p className="text-center text-sm text-slate-600">
+      <p className="text-center text-sm text-ink-muted">
         Already have an account?{' '}
-        <a href="/login" className="text-blue-600 hover:underline">
+        <a href="/login" className="text-ink-secondary underline hover:text-ink">
           Sign in
         </a>
       </p>
