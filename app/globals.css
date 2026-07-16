@@ -2,26 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+:root, [data-theme="light"] {
+  --canvas:#f5f8f4; --surface:#fff; --surface-inset:#eef3ee;
+  --border:#e2e8e2; --border-strong:#cfd8cf;
+  --text-primary:#16241d; --text-secondary:#3c4a43; --text-muted:#6b7a72;
+}
+[data-theme="dark"] {
+  --canvas:#0f1311; --surface:#171a17; --surface-inset:#141713;
+  --border:rgba(255,255,255,.08); --border-strong:rgba(255,255,255,.14);
+  --text-primary:#e4efe9; --text-secondary:#c9d4cd; --text-muted:#7f8c86;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+html, body {
+  background: var(--canvas);
+  color: var(--text-primary);
+  font-family: var(--font-inter), system-ui, sans-serif;
+  font-feature-settings: "tnum" 1; /* tabular figures — lots of %, counts, dates */
 }
 
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+  .text-balance { text-wrap: balance; }
 }

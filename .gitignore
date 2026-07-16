@@ -57,3 +57,6 @@ graphify-out/
 
 # background task outputs
 *.output
+
+# supabase CLI local state
+supabase/.temp/
