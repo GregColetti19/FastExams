@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { ContentChunk } from '@/types'
+import { EMBED_MODEL, EMBED_DIM } from '@/lib/ai/embeddings'
 
 /**
  * Map a ContentChunk (camelCase, from buildChunks) to a chunks-table row
@@ -26,6 +27,9 @@ export function toChunkRow(c: ContentChunk, embedding: number[] | null = null) {
     candidate_subtopic: c.candidateSubtopic ?? null,
     language: c.language,
     embedding,
+    // Provenance: which model/dim produced this vector (mig 011). Only stamp when
+    // a vector is actually written; leave the DB default for null-embedding rows.
+    ...(embedding ? { embedding_model: EMBED_MODEL, embedding_dim: EMBED_DIM } : {}),
   }
 }
 

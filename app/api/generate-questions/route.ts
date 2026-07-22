@@ -453,7 +453,7 @@ async function processPastExamFile(
     const canGround = usePgVector || embeddedCandidates.length > 0
     if (mcqs.length > 0 && canGround) {
       try {
-        qVectors = await embedTexts(mcqs.map((q) => q.question_text))
+        qVectors = await embedTexts(mcqs.map((q) => q.question_text), 'query')
       } catch (e) {
         console.error('Question embedding failed:', e)
       }

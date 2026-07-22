@@ -95,8 +95,8 @@ export function findBestMatchingChunk(
 /**
  * Embedding-based retrieval: find the theory chunk most semantically similar to
  * a question, by cosine similarity over precomputed embeddings. Replaces the
- * TF-IDF keyword overlap above (which misses paraphrase/synonyms, esp. in
- * Portuguese medical text). Chunks without embeddings are skipped.
+ * TF-IDF keyword overlap above (which misses paraphrase/synonyms across the
+ * many subjects and languages in the corpus). Chunks without embeddings are skipped.
  */
 export function findBestChunkByEmbedding(
   queryEmbedding: number[],

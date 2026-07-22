@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
     // Embed all question texts in one parallelised batch.
     let qVectors: number[][] = []
     try {
-      qVectors = await embedTexts(toReground.map((q: any) => q.question_text))
+      qVectors = await embedTexts(toReground.map((q: any) => q.question_text), 'query')
     } catch (e) {
       console.error('recalibrate: question embedding failed:', e)
       return NextResponse.json({ error: 'Embedding failed' }, { status: 500 })
