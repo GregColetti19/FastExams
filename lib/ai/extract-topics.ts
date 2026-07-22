@@ -1,5 +1,5 @@
 import { PROMPTS, parseJsonResponse } from './prompts'
-import { getClient, AI_MODEL } from './client'
+import { getClient, getModelFor } from './client'
 
 export interface ExtractedTopic {
   name: string
@@ -18,7 +18,8 @@ export async function extractTopics(
   const prompt = PROMPTS.topicExtraction({ subject, language, outline })
 
   const message = await getClient().messages.create({
-    model: AI_MODEL,
+    task: 'topic-extraction',
+    model: getModelFor('topic-extraction'),
     max_tokens: 2048,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user }],
@@ -66,7 +67,8 @@ export async function extractTopicHierarchy(
 
   const prompt = PROMPTS.topicHierarchyFromContent({ subject, language, samples })
   const message = await getClient().messages.create({
-    model: AI_MODEL,
+    task: 'topic-hierarchy',
+    model: getModelFor('topic-hierarchy'),
     max_tokens: 2048,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user }],
@@ -93,7 +95,8 @@ export async function tiebreakSubtopic(
     candidates: candidateSubtopics,
   })
   const message = await getClient().messages.create({
-    model: AI_MODEL,
+    task: 'tiebreak',
+    model: getModelFor('tiebreak'),
     max_tokens: 256,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user }],

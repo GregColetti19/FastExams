@@ -1,5 +1,5 @@
 import { PROMPTS, parseJsonResponse } from './prompts'
-import { getClient, AI_MODEL } from './client'
+import { getClient, getModelFor } from './client'
 
 export interface ExtractedExamQuestion {
   question_number: string
@@ -32,7 +32,8 @@ async function extractChunk(
   let responseText = ''
   try {
     const message = await getClient().messages.create({
-      model: AI_MODEL,
+      task: 'past-exam-extraction',
+      model: getModelFor('past-exam-extraction'),
       max_tokens: 8192,
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],

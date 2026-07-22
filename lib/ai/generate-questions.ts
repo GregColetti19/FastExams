@@ -1,5 +1,5 @@
 import { PROMPTS, parseJsonResponse } from './prompts'
-import { getClient, AI_MODEL } from './client'
+import { getClient, getModelFor } from './client'
 
 export interface QuestionOption {
   text: string
@@ -32,7 +32,8 @@ export async function generateQuestionsFromText(
   })
 
   const message = await getClient().messages.create({
-    model: AI_MODEL,
+    task: 'question-gen',
+    model: getModelFor('question-gen'),
     max_tokens: 4096,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user }],
@@ -62,7 +63,8 @@ export async function generateQuestionsFromImage(
   })
 
   const message = await getClient().messages.create({
-    model: AI_MODEL,
+    task: 'question-gen',
+    model: getModelFor('question-gen'),
     max_tokens: 2048,
     system: prompt.system,
     messages: [

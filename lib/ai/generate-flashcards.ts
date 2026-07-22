@@ -1,5 +1,5 @@
 import { PROMPTS, parseJsonResponse } from './prompts'
-import { getClient, AI_MODEL } from './client'
+import { getClient, getModelFor } from './client'
 
 export interface GeneratedFlashcard {
   front: string
@@ -26,7 +26,8 @@ export async function generateFlashcardsFromText(
   })
 
   const message = await getClient().messages.create({
-    model: AI_MODEL,
+    task: 'flashcard-gen',
+    model: getModelFor('flashcard-gen'),
     max_tokens: 2048,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user }],

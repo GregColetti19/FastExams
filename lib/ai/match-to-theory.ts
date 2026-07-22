@@ -1,5 +1,5 @@
 import { PROMPTS, parseJsonResponse } from './prompts'
-import { getClient, AI_MODEL } from './client'
+import { getClient, getModelFor } from './client'
 import { cosineSimilarity } from './embeddings'
 
 export interface ChunkMatch {
@@ -132,7 +132,8 @@ export async function generateJustification(
   })
 
   const message = await getClient().messages.create({
-    model: AI_MODEL,
+    task: 'justification',
+    model: getModelFor('justification'),
     max_tokens: 1024,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user }],

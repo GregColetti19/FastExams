@@ -1,5 +1,5 @@
 import { PROMPTS, parseJsonResponse } from './prompts'
-import { getClient, AI_MODEL } from './client'
+import { getClient, getModelFor } from './client'
 
 export interface ExamAnswerResult {
   /** False when the source material doesn't support a confident answer. */
@@ -50,7 +50,8 @@ export async function answerExamQuestion(
   })
 
   const message = await getClient().messages.create({
-    model: AI_MODEL,
+    task: 'answer-determination',
+    model: getModelFor('answer-determination'),
     max_tokens: 1024,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user }],
