@@ -7,6 +7,8 @@ export interface ChunkMatch {
   subtopicId: string | null
   score: number
   contentText: string
+  /** Similarity scores of the whole candidate pool (best-first), for relative gating. */
+  candidateScores: number[]
 }
 
 /**
@@ -26,13 +28,15 @@ export async function matchChunkForQuestion(
     p_exam_id: examId,
     match_count: matchCount,
   })
-  if (error || !data?.length) return { chunkId: '', subtopicId: null, score: 0, contentText: '' }
+  if (error || !data?.length)
+    return { chunkId: '', subtopicId: null, score: 0, contentText: '', candidateScores: [] }
   const best = data[0]
   return {
     chunkId: best.id,
     subtopicId: best.subtopic_id,
     score: best.similarity,
     contentText: best.content_text,
+    candidateScores: data.map((d: any) => d.similarity as number),
   }
 }
 
@@ -102,16 +106,21 @@ export function findBestMatchingChunk(
 export function findBestChunkByEmbedding(
   queryEmbedding: number[],
   chunks: Array<{ id: string; subtopicId: string | null; embedding: number[] | null }>
-): { chunkId: string; subtopicId: string | null; score: number } {
+): { chunkId: string; subtopicId: string | null; score: number; candidateScores: number[] } {
   let best = { chunkId: '', subtopicId: null as string | null, score: -1 }
+  const candidateScores: number[] = []
   for (const c of chunks) {
     if (!c.embedding || c.embedding.length === 0) continue
     const score = cosineSimilarity(queryEmbedding, c.embedding)
+    candidateScores.push(score)
     if (score > best.score) {
       best = { chunkId: c.id, subtopicId: c.subtopicId, score }
     }
   }
-  return best.score < 0 ? { chunkId: '', subtopicId: null, score: 0 } : best
+  candidateScores.sort((a, b) => b - a)
+  return best.score < 0
+    ? { chunkId: '', subtopicId: null, score: 0, candidateScores: [] }
+    : { ...best, candidateScores }
 }
 
 /**

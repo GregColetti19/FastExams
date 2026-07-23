@@ -9,6 +9,7 @@ import { embedTexts, isEmbedMockEnabled } from '@/lib/ai/embeddings'
 import { answerExamQuestion } from '@/lib/ai/answer-exam-question'
 import { generateFlashcardsFromChunks } from '@/lib/ai/generate-flashcards'
 import { getRetrievalConfig, scoreStats } from '@/lib/ai/retrieval-config'
+import { decideGrounding, relativeGatesEnabled } from '@/lib/ai/grounding-gate'
 
 // Below this AI confidence, flag the question as unanswerable rather than assert.
 // (Not a retrieval threshold — this gates the ANSWER step, not grounding.)
@@ -495,6 +496,7 @@ async function processPastExamFile(
         let matchSubtopicId: string | null = null
         let matchScore = 0
         let matchedContent = ''
+        let candidateScores: number[] = []
 
         if (qVec && usePgVector) {
           const rpc = await matchChunkForQuestion(supabase, exam.id, qVec, rc.annCandidates)
@@ -502,16 +504,33 @@ async function processPastExamFile(
           matchSubtopicId = rpc.subtopicId
           matchScore = rpc.score
           matchedContent = rpc.contentText
+          candidateScores = rpc.candidateScores
         } else if (qVec && embeddedCandidates.length > 0) {
           const bf = findBestChunkByEmbedding(qVec, embeddedCandidates)
           matchChunkId = bf.chunkId
           matchSubtopicId = bf.subtopicId
           matchScore = bf.score
           matchedContent = theoryChunks.find((c) => c.id === bf.chunkId)?.content_text || ''
+          candidateScores = bf.candidateScores
         }
 
         matchScores.push(matchScore)
-        const grounded = matchScore >= rc.matchMinScore && !!matchSubtopicId
+        // Absolute (default) vs relative self-calibrating gate. Relative is
+        // OFF unless RETRIEVAL_RELATIVE_GATES=true; both decisions are logged
+        // when on so they can be compared on real data before any switchover.
+        const gate = decideGrounding({
+          bestScore: matchScore,
+          candidateScores,
+          hasSubtopic: !!matchSubtopicId,
+          matchMinScore: rc.matchMinScore,
+        })
+        if (relativeGatesEnabled() && gate.absolute !== gate.relative) {
+          console.log(
+            `[gate] exam=${exam.id} q=${qi} DIVERGE abs=${gate.absolute} rel=${gate.relative} ` +
+            `best=${matchScore.toFixed(3)} pool=[${candidateScores.slice(0, 5).map((s) => s.toFixed(3)).join(',')}]`
+          )
+        }
+        const grounded = gate.grounded
 
         // AI-answer from the matched theory (empty source => unanswerable).
         const answer = await answerExamQuestion(
