@@ -18,12 +18,13 @@ export async function matchChunkForQuestion(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
   examId: string,
-  queryEmbedding: number[]
+  queryEmbedding: number[],
+  matchCount: number = 5
 ): Promise<ChunkMatch> {
   const { data, error } = await supabase.rpc('match_chunks', {
     query_embedding: queryEmbedding,
     p_exam_id: examId,
-    match_count: 5,
+    match_count: matchCount,
   })
   if (error || !data?.length) return { chunkId: '', subtopicId: null, score: 0, contentText: '' }
   const best = data[0]

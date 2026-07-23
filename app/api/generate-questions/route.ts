@@ -8,12 +8,10 @@ import { findBestChunkByEmbedding, matchChunkForQuestion } from '@/lib/ai/match-
 import { embedTexts, isEmbedMockEnabled } from '@/lib/ai/embeddings'
 import { answerExamQuestion } from '@/lib/ai/answer-exam-question'
 import { generateFlashcardsFromChunks } from '@/lib/ai/generate-flashcards'
+import { getRetrievalConfig, scoreStats } from '@/lib/ai/retrieval-config'
 
-// Below this cosine score, theory grounding is too weak to attempt an answer.
-// Permissive on purpose: the answer step (confidence/answerable) is the real
-// quality gate; this only decides whether to try grounding at all.
-const EMBED_MATCH_MIN_SCORE = 0.25
 // Below this AI confidence, flag the question as unanswerable rather than assert.
+// (Not a retrieval threshold — this gates the ANSWER step, not grounding.)
 const ANSWER_MIN_CONFIDENCE = 0.4
 
 /** Leading option letter, e.g. "B. Mitral valve" -> "B". */
@@ -140,6 +138,10 @@ async function processTheoryFile(
   fileRole: string
 ) {
   try {
+    // Retrieval knobs (subject/language-tunable seam; subject not on the exam
+    // record today, so only language is passed).
+    const rc = getRetrievalConfig({ language: exam.language })
+
     // Step 1: Build a content-grounded topic→subtopic tree. Real converter
     // output drops headings, so infer the tree from a sample of actual content.
     const hierarchy = await extractTopicHierarchy(
@@ -193,7 +195,22 @@ async function processTheoryFile(
       .filter((c) => Array.isArray(c.embedding) && c.embedding.length > 0)
       .map((c) => ({ id: c.id, embedding: c.embedding as number[] }))
 
-    const assignments = assignChunksToSubtopics(chunkVecs, subtopicSeeds)
+    const assignments = assignChunksToSubtopics(chunkVecs, subtopicSeeds, {
+      seedK: rc.seedK,
+      iters: rc.iters,
+      confidentMargin: rc.confidentMargin,
+    })
+
+    // Log observed assignment-margin distribution — the only way to set
+    // per-subject thresholds empirically later instead of by guesswork.
+    const margins = assignments.map((a) => a.margin)
+    const mStats = scoreStats(margins)
+    const belowMargin = margins.filter((m) => m < rc.confidentMargin).length
+    console.log(
+      `[retrieval] exam=${exam.id} assign-margins median=${mStats.median.toFixed(3)} ` +
+      `p10=${mStats.p10.toFixed(3)} p90=${mStats.p90.toFixed(3)} ` +
+      `below-confidentMargin=${belowMargin}/${margins.length}`
+    )
 
     // Decide early whether this exam has real past-exam questions. If so, we
     // KEEP those and skip AI question generation — and we also skip the LLM
@@ -403,6 +420,8 @@ async function processPastExamFile(
   fileRole: string
 ) {
   try {
+    const rc = getRetrievalConfig({ language: exam.language })
+
     // Reconstruct markdown from this past-exam file's chunks
     const markdown = chunks.map((c) => c.content_text).join('\n\n')
 
@@ -463,6 +482,7 @@ async function processPastExamFile(
     let questionsCreated = 0
     let questionsFlagged = 0
     const questionErrors: string[] = []
+    const matchScores: number[] = [] // observed best-match scores, logged at end
 
     for (let qi = 0; qi < mcqs.length; qi++) {
       const q = mcqs[qi]
@@ -477,7 +497,7 @@ async function processPastExamFile(
         let matchedContent = ''
 
         if (qVec && usePgVector) {
-          const rpc = await matchChunkForQuestion(supabase, exam.id, qVec)
+          const rpc = await matchChunkForQuestion(supabase, exam.id, qVec, rc.annCandidates)
           matchChunkId = rpc.chunkId
           matchSubtopicId = rpc.subtopicId
           matchScore = rpc.score
@@ -490,7 +510,8 @@ async function processPastExamFile(
           matchedContent = theoryChunks.find((c) => c.id === bf.chunkId)?.content_text || ''
         }
 
-        const grounded = matchScore >= EMBED_MATCH_MIN_SCORE && !!matchSubtopicId
+        matchScores.push(matchScore)
+        const grounded = matchScore >= rc.matchMinScore && !!matchSubtopicId
 
         // AI-answer from the matched theory (empty source => unanswerable).
         const answer = await answerExamQuestion(
@@ -572,6 +593,15 @@ async function processPastExamFile(
         questionErrors.push(msg)
       }
     }
+
+    // Log observed match-score distribution for empirical per-subject tuning.
+    const sStats = scoreStats(matchScores)
+    const belowMin = matchScores.filter((s) => s < rc.matchMinScore).length
+    console.log(
+      `[retrieval] exam=${exam.id} match-scores median=${sStats.median.toFixed(3)} ` +
+      `p10=${sStats.p10.toFixed(3)} p90=${sStats.p90.toFixed(3)} ` +
+      `below-matchMinScore=${belowMin}/${matchScores.length}`
+    )
 
     // Write success + mark done
     await (supabase.from('files') as any)
