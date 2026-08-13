@@ -169,7 +169,7 @@ export function mockMessagesCreate(params: any): Promise<Msg> {
   }
 
   // Justification generation for matched past-exam questions
-  if (system.includes('medical educator')) {
+  if (system.includes('university educator')) {
     return Promise.resolve(
       reply({
         justification:

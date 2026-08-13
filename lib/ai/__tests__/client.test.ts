@@ -149,4 +149,103 @@ describe('openai-compat adapter', () => {
     await getClient().messages.create({ task: 'question-gen', model: 'x/y', max_tokens: 1, system: '', messages: [] })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('TRUNCATED'))
   })
+
+  it('sends effort:low for reasoning-mandatory models, none otherwise', async () => {
+    process.env.MOCK_AI = 'false'
+    process.env.AI_PROVIDER = 'openai-compat'
+    process.env.AI_API_KEY = 'k'
+    const spy = stubFetch({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }], usage: {} })
+
+    // This endpoint 400s on effort:'none' ("Reasoning is mandatory").
+    await getClient().messages.create({
+      task: 'question-gen', model: 'google/gemini-3.5-flash-lite', max_tokens: 5, system: '', messages: [],
+    })
+    expect(JSON.parse((spy.mock.calls[0][1] as any).body).reasoning).toEqual({ effort: 'low' })
+
+    await getClient().messages.create({ task: 'question-gen', model: 'qwen/qwen3.7-flash', max_tokens: 5, system: '', messages: [] })
+    expect(JSON.parse((spy.mock.calls[1][1] as any).body).reasoning).toEqual({ effort: 'none' })
+  })
+
+  it('sends response_format only when a schema is supplied', async () => {
+    process.env.MOCK_AI = 'false'
+    process.env.AI_PROVIDER = 'openai-compat'
+    process.env.AI_API_KEY = 'k'
+    const schema = { type: 'object', properties: { a: { type: 'string' } } }
+    const spy = stubFetch({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }], usage: {} })
+
+    await getClient().messages.create({ task: 'tiebreak', model: 'x/y', max_tokens: 5, system: '', messages: [], schema })
+    let body = JSON.parse((spy.mock.calls[0][1] as any).body)
+    expect(body.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'result', strict: true, schema },
+    })
+
+    // Without a schema the field is absent entirely (not undefined/null), so
+    // providers that reject unknown keys are unaffected.
+    await getClient().messages.create({ task: 'tiebreak', model: 'x/y', max_tokens: 5, system: '', messages: [] })
+    body = JSON.parse((spy.mock.calls[1][1] as any).body)
+    expect('response_format' in body).toBe(false)
+  })
+})
+
+// Model-id routing: with AI_PROVIDER unset, the model id picks the provider so a
+// single run can mix vendors (sonnet direct on ANTHROPIC_API_KEY, the rest via
+// the gateway). Asserted through fetch: the gateway path calls fetch, the
+// Anthropic SDK path does not.
+describe('provider routing by model id', () => {
+  const saved = { ...process.env }
+  afterEach(() => {
+    vi.restoreAllMocks()
+    process.env = { ...saved }
+  })
+
+  function stubFetch() {
+    const spy = vi.fn(async (_url: string, _init: any) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }], usage: {} }),
+      text: async () => '',
+    }))
+    vi.stubGlobal('fetch', spy as unknown as typeof fetch)
+    return spy
+  }
+
+  it('routes vendor-prefixed ids to the openai-compat gateway', async () => {
+    process.env.MOCK_AI = 'false'
+    delete process.env.AI_PROVIDER
+    process.env.AI_API_KEY = 'k'
+    const spy = stubFetch()
+    await getClient('qwen/qwen3.7-plus').messages.create({
+      task: 'answer-determination', model: 'qwen/qwen3.7-plus', max_tokens: 5, system: '', messages: [],
+    })
+    expect(spy).toHaveBeenCalledOnce()
+    expect(spy.mock.calls[0][0]).toContain('/chat/completions')
+  })
+
+  it('routes bare claude-* ids to the Anthropic SDK, not the gateway', async () => {
+    process.env.MOCK_AI = 'false'
+    delete process.env.AI_PROVIDER
+    const spy = stubFetch()
+    // No ANTHROPIC_API_KEY here, so the SDK throws — that it throws rather than
+    // hitting fetch is exactly the proof it took the Anthropic path.
+    delete process.env.ANTHROPIC_API_KEY
+    await expect(
+      getClient('claude-sonnet-5').messages.create({
+        task: 'answer-determination', model: 'claude-sonnet-5', max_tokens: 5, system: '', messages: [],
+      })
+    ).rejects.toThrow()
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('AI_PROVIDER still forces one path for every model id', async () => {
+    process.env.MOCK_AI = 'false'
+    process.env.AI_PROVIDER = 'openai-compat'
+    process.env.AI_API_KEY = 'k'
+    const spy = stubFetch()
+    // A claude id would route to Anthropic on id alone; the explicit override wins.
+    await getClient('claude-sonnet-5').messages.create({
+      task: 'answer-determination', model: 'claude-sonnet-5', max_tokens: 5, system: '', messages: [],
+    })
+    expect(spy).toHaveBeenCalledOnce()
+  })
 })

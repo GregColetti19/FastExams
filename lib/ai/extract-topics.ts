@@ -13,11 +13,13 @@ export interface TopicExtractionResult {
 export async function extractTopics(
   outline: string,
   language: string = 'English',
-  subject: string = 'medicine'
+  // Neutral default: the app takes any university course. Callers should pass
+  // the inferred subject (see lib/ai/infer-subject.ts).
+  subject: string = 'general university studies'
 ): Promise<TopicExtractionResult> {
   const prompt = PROMPTS.topicExtraction({ subject, language, outline })
 
-  const message = await getClient().messages.create({
+  const message = await getClient(getModelFor('topic-extraction')).messages.create({
     task: 'topic-extraction',
     model: getModelFor('topic-extraction'),
     max_tokens: 2048,
@@ -59,14 +61,16 @@ export interface TopicHierarchyResult {
 export async function extractTopicHierarchy(
   sampleTexts: string[],
   language: string = 'en',
-  subject: string = 'medicine'
+  // Neutral default: the app takes any university course. Callers should pass
+  // the inferred subject (see lib/ai/infer-subject.ts).
+  subject: string = 'general university studies'
 ): Promise<TopicHierarchyResult> {
   const samples = sampleTexts
     .map((t, i) => `--- excerpt ${i + 1} ---\n${t.slice(0, 1200)}`)
     .join('\n\n')
 
   const prompt = PROMPTS.topicHierarchyFromContent({ subject, language, samples })
-  const message = await getClient().messages.create({
+  const message = await getClient(getModelFor('topic-hierarchy')).messages.create({
     task: 'topic-hierarchy',
     model: getModelFor('topic-hierarchy'),
     max_tokens: 2048,
@@ -94,7 +98,7 @@ export async function tiebreakSubtopic(
     chunk_text: chunkText.slice(0, 1500),
     candidates: candidateSubtopics,
   })
-  const message = await getClient().messages.create({
+  const message = await getClient(getModelFor('tiebreak')).messages.create({
     task: 'tiebreak',
     model: getModelFor('tiebreak'),
     max_tokens: 256,

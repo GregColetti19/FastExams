@@ -60,3 +60,12 @@ graphify-out/
 
 # supabase CLI local state
 supabase/.temp/
+
+# Model-eval artifacts: regenerable by scripts/model-grid/*.mjs and large
+# (~84MB of embedding vectors, per-cell answers, converted corpora).
+scripts/model-grid/data/
+scripts/model-grid/results/
+scripts/model-grid/results-*/
+scripts/model-grid/gen-eval/data/
+scripts/model-grid/gen-eval/results/
+scripts/model-grid/gen-eval/results-*/

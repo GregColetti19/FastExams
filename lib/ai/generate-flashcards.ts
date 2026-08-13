@@ -15,7 +15,9 @@ export async function generateFlashcardsFromText(
   topic: string,
   subtopic: string,
   language: string = 'en',
-  numFlashcards: number = 5
+  numFlashcards: number = 5,
+  /** Inferred course subject; omit for neutral framing. */
+  subject?: string
 ): Promise<GeneratedFlashcard[]> {
   const prompt = PROMPTS.flashcardGeneration({
     n: numFlashcards,
@@ -23,9 +25,10 @@ export async function generateFlashcardsFromText(
     topic,
     subtopic,
     text,
+    subject,
   })
 
-  const message = await getClient().messages.create({
+  const message = await getClient(getModelFor('flashcard-gen')).messages.create({
     task: 'flashcard-gen',
     model: getModelFor('flashcard-gen'),
     max_tokens: 2048,
@@ -48,7 +51,8 @@ export async function generateFlashcardsFromChunks(
   chunks: Array<{ text: string }>,
   topic: string,
   subtopic: string,
-  language: string = 'en'
+  language: string = 'en',
+  subject?: string
 ): Promise<GeneratedFlashcard[]> {
   const allFlashcards: GeneratedFlashcard[] = []
 
@@ -59,7 +63,8 @@ export async function generateFlashcardsFromChunks(
         topic,
         subtopic,
         language,
-        3 // 3 flashcards per chunk
+        3, // 3 flashcards per chunk
+        subject
       )
       allFlashcards.push(...flashcards)
       // Rate limiting

@@ -46,11 +46,21 @@ function resolveEmbedKey(): string {
   return key
 }
 
-// ponytail: inputType is accepted + threaded but not sent to OpenAI (no-op);
-// wire it into the request body when an asymmetric provider is configured.
+/**
+ * Instruction prefix applied to *queries only* for asymmetric models.
+ *
+ * Qwen3-Embedding is trained with an instruction on the query side and none on
+ * the document side; omitting it costs measurable retrieval quality. OpenAI's
+ * models are symmetric and must NOT get a prefix (it would just become part of
+ * the embedded text). Off unless EMBED_QUERY_INSTRUCTION is set, so the default
+ * provider's behaviour is unchanged.
+ */
+function queryInstruction(): string | null {
+  return process.env.EMBED_QUERY_INSTRUCTION || null
+}
+
 export async function embedTexts(
   texts: string[],
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   inputType: EmbedInputType = 'document'
 ): Promise<number[][]> {
   if (texts.length === 0) return []
@@ -59,7 +69,12 @@ export async function embedTexts(
   const apiKey = resolveEmbedKey()
 
   // Truncate oversized inputs (a single over-limit input 400s the whole call).
-  const inputs = texts.map((t) => (t || '').slice(0, MAX_INPUT_CHARS))
+  // Truncate first, then prefix: the instruction must survive truncation.
+  const instruction = inputType === 'query' ? queryInstruction() : null
+  const inputs = texts.map((t) => {
+    const body = (t || '').slice(0, MAX_INPUT_CHARS)
+    return instruction ? `${instruction}${body}` : body
+  })
 
   const batches: string[][] = []
   for (let i = 0; i < inputs.length; i += EMBED_BATCH) {

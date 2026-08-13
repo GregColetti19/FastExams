@@ -31,7 +31,7 @@ async function extractChunk(
 
   let responseText = ''
   try {
-    const message = await getClient().messages.create({
+    const message = await getClient(getModelFor('past-exam-extraction')).messages.create({
       task: 'past-exam-extraction',
       model: getModelFor('past-exam-extraction'),
       max_tokens: 8192,

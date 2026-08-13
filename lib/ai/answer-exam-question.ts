@@ -49,7 +49,7 @@ export async function answerExamQuestion(
     theory_text: theoryText,
   })
 
-  const message = await getClient().messages.create({
+  const message = await getClient(getModelFor('answer-determination')).messages.create({
     task: 'answer-determination',
     model: getModelFor('answer-determination'),
     max_tokens: 1024,

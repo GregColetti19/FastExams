@@ -45,8 +45,45 @@ export interface AiClient {
   }
 }
 
-function providerName(): string {
-  return process.env.AI_PROVIDER === 'openai-compat' ? 'openai-compat' : 'anthropic'
+/**
+ * Which provider serves a given model.
+ *
+ * AI_PROVIDER, when set, forces every call down one path (previous behaviour).
+ * When unset, the model id decides: Anthropic ids ('claude-sonnet-5',
+ * 'anthropic/claude-sonnet-5') go to the Anthropic SDK on ANTHROPIC_API_KEY;
+ * anything namespaced for a gateway ('qwen/...', 'openai/...') goes to the
+ * openai-compat path. This lets one run mix providers — required for per-task
+ * tiering across vendors, and for eval grids that pit them against each other.
+ */
+function providerName(model?: string): string {
+  const forced = process.env.AI_PROVIDER
+  if (forced === 'openai-compat') return 'openai-compat'
+  if (forced === 'anthropic') return 'anthropic'
+  if (model) {
+    // Bare 'claude-*' is Anthropic's own id form; 'anthropic/*' is the gateway form.
+    if (/^claude-/.test(model)) return 'anthropic'
+    if (model.includes('/')) return 'openai-compat'
+  }
+  return 'anthropic'
+}
+
+/**
+ * Models that reject `reasoning: { effort: 'none' }` and must be sent a real
+ * effort level. Defaults to the one endpoint known to 400 on it
+ * (gemini-3.5-flash-lite, verified 2026-08-12); override with a comma-separated
+ * substring list in AI_REASONING_MANDATORY as other providers follow suit.
+ */
+function reasoningMandatory(model: string): boolean {
+  const list = (process.env.AI_REASONING_MANDATORY ?? 'gemini-3.5-flash-lite')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return list.some((frag) => model.includes(frag))
+}
+
+/** Gateway ids carry a vendor prefix the Anthropic SDK doesn't accept — strip it. */
+function stripVendorPrefix(model: string): string {
+  return model.startsWith('anthropic/') ? model.slice('anthropic/'.length) : model
 }
 
 // --- Anthropic (default) ----------------------------------------------------
@@ -56,7 +93,11 @@ let anthropicSdk: Anthropic | null = null
 const anthropicClient: AiClient = {
   messages: {
     create: async (params: any) => {
-      const { task, ...apiParams } = params
+      // `schema` is the provider-agnostic structured-output hint; the Anthropic
+      // path doesn't take response_format, so drop it (prompts already ask for
+      // JSON, and parseJsonResponse still guards).
+      const { task, schema: _schema, ...rest } = params
+      const apiParams = { ...rest, model: stripVendorPrefix(rest.model) }
       if (!anthropicSdk) anthropicSdk = new Anthropic()
       const started = Date.now()
       const message: any = await anthropicSdk.messages.create(apiParams)
@@ -101,7 +142,7 @@ function resolveChatBaseUrl(): string {
 const openaiCompatClient: AiClient = {
   messages: {
     create: async (params: any) => {
-      const { task, model, max_tokens, system, messages } = params
+      const { task, model, max_tokens, system, messages, schema } = params
       const key = resolveChatKey()
       const baseUrl = resolveChatBaseUrl()
 
@@ -126,10 +167,29 @@ const openaiCompatClient: AiClient = {
           model,
           max_tokens,
           messages: outMessages,
+          // Schema-constrained decoding when the call site supplies one: the
+          // model *cannot* emit non-conforming JSON, so malformed output stops
+          // being a failure mode instead of something to detect after the fact.
+          // Models without structured-output support ignore this and fall back
+          // to prompt-instructed JSON + parseJsonResponse.
+          ...(schema
+            ? {
+                response_format: {
+                  type: 'json_schema',
+                  json_schema: { name: 'result', strict: true, schema },
+                },
+              }
+            : {}),
           // Reasoning bills as output and this workload is output-dominated, so
           // disable it. Per OpenRouter docs, effort:'none' disables reasoning
           // entirely (unlike exclude, which keeps reasoning but hides it).
-          reasoning: { effort: 'none' },
+          //
+          // Some endpoints refuse: google/gemini-3.5-flash-lite 400s with
+          // "Reasoning is mandatory for this endpoint and cannot be disabled."
+          // Those models are listed in AI_REASONING_MANDATORY (comma-separated
+          // substrings) and get minimum effort instead of none, so they are
+          // usable via AI_MODEL_* at all. Their reasoning tokens bill as output.
+          reasoning: { effort: reasoningMandatory(model) ? 'low' : 'none' },
           // Don't route to providers that retain inputs for training.
           provider: { data_collection: 'deny' },
         }),
@@ -172,12 +232,14 @@ const mockClient: AiClient = {
  * Returns the active AI client.
  *
  * MOCK_AI takes absolute precedence (checked per-call, not cached, so tests can
- * flip it between cases). Otherwise AI_PROVIDER selects anthropic (default) or
- * openai-compat. The default path uses the Anthropic SDK's own ANTHROPIC_API_KEY.
+ * flip it between cases). Otherwise AI_PROVIDER forces a path when set; when it
+ * is unset the `model` id routes (see providerName). Pass the same model id you
+ * will pass to messages.create, or omit it to get the Anthropic default.
+ * The Anthropic path uses the SDK's own ANTHROPIC_API_KEY.
  */
-export function getClient(): AiClient {
+export function getClient(model?: string): AiClient {
   if (isMockEnabled()) return mockClient
-  if (providerName() === 'openai-compat') return openaiCompatClient
+  if (providerName(model) === 'openai-compat') return openaiCompatClient
   return anthropicClient
 }
 

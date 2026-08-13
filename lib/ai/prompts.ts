@@ -91,22 +91,28 @@ Respond with: { "subtopic": "exact subtopic name or none" }`,
     topic: string
     subtopic: string
     text: string
+    /** Inferred course subject, e.g. "Numerical Analysis". Never assume medicine. */
+    subject?: string
+    /** Domain-appropriate question styles (see questionStylesFor). */
+    questionStyles?: string
   }) => ({
-    system: `You are an expert medical exam question writer. You create high-quality multiple choice questions
-for university medical students. Always respond with valid JSON only. No preamble, no markdown fences.`,
+    system: `You are an expert university exam question writer${params.subject ? ` for ${params.subject}` : ''}. You create high-quality multiple choice questions
+for university students. Always respond with valid JSON only. No preamble, no markdown fences.`,
     user: `Generate ${params.n} multiple choice questions from the following study content.
 Document language: ${params.language}
-Topic: ${params.topic}
+${params.subject ? `Course subject: ${params.subject}\n` : ''}Topic: ${params.topic}
 Subtopic: ${params.subtopic}
 
 Rules:
 - Each question must have exactly 4 options
 - Exactly one option must be correct
 - Wrong options must be plausible (not obviously wrong)
+- Keep all four options similar in length and specificity: each between a short phrase and one full sentence. The correct option must NOT be the longest or most detailed — students otherwise pick it on length alone.
+- Draw wrong options from the surrounding material where possible (a neighbouring definition, a related condition, a nearby result) rather than inventing them
 - The justification must explain WHY the correct answer is right, and briefly why the others are wrong
 - Questions must test understanding, not just memorization of exact phrases
 - Write questions and options in the same language as the document (${params.language})
-- Question types to use: mix of factual, applied, and clinical reasoning
+- Question types to use: ${params.questionStyles ?? 'a mix of factual, applied, and comparative reasoning'}
 
 Content:
 ${params.text}
@@ -133,12 +139,13 @@ Respond with this exact JSON structure:
     topic: string
     subtopic: string
     text: string
+    subject?: string
   }) => ({
-    system: `You are an expert medical exam question writer specializing in visual/diagram-based questions.
+    system: `You are an expert university exam question writer specializing in visual/diagram-based questions.
 Always respond with valid JSON only. No preamble, no markdown fences.`,
-    user: `An image is from a medical study document.
+    user: `An image is from a university study document${params.subject ? ` for a ${params.subject} course` : ''}.
 Document language: ${params.language}
-Topic: ${params.topic}
+${params.subject ? `Course subject: ${params.subject}\n` : ''}Topic: ${params.topic}
 Subtopic: ${params.subtopic}
 
 Additional text context from this slide/page:
@@ -151,6 +158,7 @@ Rules:
 - Each question must have exactly 4 options
 - Exactly one option is correct
 - Wrong options must be plausible
+- Keep all four options similar in length and specificity: each between a short phrase and one full sentence. The correct option must NOT be the longest.
 - Reference the image explicitly in the question (e.g. "In the diagram shown...", "Based on the figure...")
 - Justification must explain what to look for in the image
 - Write in ${params.language}
@@ -172,18 +180,25 @@ Respond with this exact JSON structure:
 }`,
   }),
 
-  flashcardGeneration: (params: { n: number; language: string; topic: string; subtopic: string; text: string }) => ({
+  flashcardGeneration: (params: {
+    n: number
+    language: string
+    topic: string
+    subtopic: string
+    text: string
+    subject?: string
+  }) => ({
     system: `You are an expert at creating concise, effective study flashcards using active recall principles.
 Always respond with valid JSON only. No preamble, no markdown fences.`,
     user: `Create ${params.n} flashcards from the following study content.
 Document language: ${params.language}
-Topic: ${params.topic}
+${params.subject ? `Course subject: ${params.subject}\n` : ''}Topic: ${params.topic}
 Subtopic: ${params.subtopic}
 
 Rules:
 - Front: a clear question or concept prompt
 - Back: a concise answer (2–4 sentences max)
-- Focus on definitions, mechanisms, classifications, and clinical relevance
+- Focus on the ideas that carry the material: definitions, key mechanisms or arguments, classifications, and why each matters
 - Write in ${params.language}
 
 Content:
@@ -238,7 +253,7 @@ Respond with:
     wrong_options: string[]
     matched_chunk_text: string
   }) => ({
-    system: `You are an expert medical educator. You write clear, concise explanations for why exam answers are correct.
+    system: `You are an expert university educator. You write clear, concise explanations for why exam answers are correct.
 Always respond with valid JSON only. No preamble, no markdown fences.`,
     user: `A past exam question has been matched to the following theory content.
 Document language: ${params.language}
@@ -266,7 +281,7 @@ Respond with:
     options: string[]
     theory_text: string
   }) => ({
-    system: `You are an expert medical educator answering exam multiple-choice questions.
+    system: `You are an expert university educator answering exam multiple-choice questions.
 You answer ONLY from the provided source material — never from outside knowledge.
 If the source does not contain enough information to determine the answer, you say so instead of guessing.
 Always respond with valid JSON only. No preamble, no markdown fences.`,

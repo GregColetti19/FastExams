@@ -4,6 +4,7 @@ import { convertFile } from '@/lib/processing/converter-client'
 import { detectLanguage } from '@/lib/processing/language-detector'
 import { buildChunks, splitChunksByTokens, toChunkRow } from '@/lib/processing/chunk-builder'
 import { embedTexts } from '@/lib/ai/embeddings'
+import { inferSubject } from '@/lib/ai/infer-subject'
 
 export async function POST(request: NextRequest) {
   try {
@@ -74,11 +75,11 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Update exam with detected language if not already set
+      // Update exam with detected language + inferred subject if not already set
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: exam } = await supabase
         .from('exams')
-        .select('language')
+        .select('language, subject')
         .eq('id', file.exam_id)
         .single() as any
 
@@ -87,6 +88,19 @@ export async function POST(request: NextRequest) {
         await (supabase.from('exams') as any)
           .update({ language: langResult.code })
           .eq('id', file.exam_id)
+      }
+
+      // Infer the course subject once per exam, from the first theory file.
+      // Best-effort: inferSubject swallows its own errors and returns a neutral
+      // default, so a failure here never blocks ingestion.
+      if (exam && !exam.subject && file.file_role !== 'past_exam') {
+        const inferred = await inferSubject(convertResult.markdown, langResult.code)
+        if (inferred.inferred) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from('exams') as any)
+            .update({ subject: inferred.subject, subject_domain: inferred.domain })
+            .eq('id', file.exam_id)
+        }
       }
 
       // Conversion done. Mark the file 'ready' (converted, chunked, embedded)

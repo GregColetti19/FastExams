@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient_ } from '@/lib/supabase/server'
 import { extractTopicHierarchy, tiebreakSubtopic } from '@/lib/ai/extract-topics'
 import { assignChunksToSubtopics } from '@/lib/ai/assign-subtopics'
-import { generateQuestionsFromChunks } from '@/lib/ai/generate-questions'
+import { generateQuestionsFromChunks, shuffleOptions, equalizeOptionLengths } from '@/lib/ai/generate-questions'
 import { extractPastExamQuestions } from '@/lib/ai/extract-past-exam-questions'
 import { findBestChunkByEmbedding, matchChunkForQuestion } from '@/lib/ai/match-to-theory'
 import { embedTexts, isEmbedMockEnabled } from '@/lib/ai/embeddings'
@@ -147,7 +147,8 @@ async function processTheoryFile(
     // output drops headings, so infer the tree from a sample of actual content.
     const hierarchy = await extractTopicHierarchy(
       stratifiedSample(chunks.map((c) => c.content_text || ''), 12),
-      exam.language || 'en'
+      exam.language || 'en',
+      exam.subject || undefined
     )
 
     // Step 2: Create topic + subtopic records; collect seeds (name+description+id).
@@ -284,7 +285,10 @@ async function processTheoryFile(
           })),
           seed.topic,
           subtopicName,
-          exam.language || 'en'
+          exam.language || 'en',
+          // Undefined (not a medical default) when inference hasn't run, so the
+          // prompt falls back to neutral framing.
+          exam.subject ? { subject: exam.subject, domain: exam.subject_domain || 'other' } : undefined
         )
 
         // Insert questions
@@ -311,9 +315,15 @@ async function processTheoryFile(
 
           const questionId = qRecord[0].id
 
-          // Insert options
-          for (let i = 0; i < q.options.length; i++) {
-            const opt = q.options[i]
+          // Two de-biasing passes before persisting, because display_order below
+          // is exactly what the quiz renders:
+          //  1. length — the correct option is otherwise the longest ~50% of the
+          //     time (25% = unbiased), and a prompt rule did not move it.
+          //  2. position — generators emit the correct option first, up to 100%.
+          const balanced = await equalizeOptionLengths(q, exam.language || 'en')
+          const shuffledOptions = shuffleOptions(balanced)
+          for (let i = 0; i < shuffledOptions.length; i++) {
+            const opt = shuffledOptions[i]
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const { error: optInsertError } = await (supabase.from('question_options') as any)
               .insert([
@@ -337,7 +347,8 @@ async function processTheoryFile(
           subtopicChunks.map((c) => ({ text: c.content_text })),
           seed.topic,
           subtopicName,
-          exam.language || 'en'
+          exam.language || 'en',
+          exam.subject || undefined
         )
 
         // Insert flashcards as special questions

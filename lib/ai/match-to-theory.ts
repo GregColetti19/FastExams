@@ -141,7 +141,7 @@ export async function generateJustification(
     matched_chunk_text: matchedChunkText,
   })
 
-  const message = await getClient().messages.create({
+  const message = await getClient(getModelFor('justification')).messages.create({
     task: 'justification',
     model: getModelFor('justification'),
     max_tokens: 1024,
