@@ -440,7 +440,11 @@ async function processPastExamFile(
     // Extract the questions (options preserved; answer key usually absent)
     const examResult = await extractPastExamQuestions(markdown, exam.language || 'en')
 
+    // MCQ-only by design: answer determination needs discrete options to choose
+    // between (see answerExamQuestion). Open questions are extracted but skipped —
+    // counted here so the user is told rather than silently losing them.
     const mcqs = examResult.questions.filter((q) => q.type === 'mcq')
+    const skippedOpen = examResult.questions.length - mcqs.length
 
     // Real mode: pgvector RPC (migration 009) does indexed ANN search in Postgres.
     // Mock mode: fetch all theory chunks + brute-force JS cosine (RPC unavailable).
@@ -638,11 +642,23 @@ async function processPastExamFile(
       .update({ processing_status: 'done' })
       .eq('id', fileId)
 
-    // If there were failures, log them
+    // Surface failures and skipped-open notices in one field. Skipped opens are
+    // NOT a failure — the file still completes 'done'; the user just needs to
+    // know those questions didn't become study material.
+    const notices: string[] = []
     if (questionErrors.length > 0) {
-      const errorSummary = questionErrors.slice(0, 3).join('; ')
+      notices.push(
+        `Failed to process ${questionErrors.length} question(s): ${questionErrors.slice(0, 3).join('; ')}`
+      )
+    }
+    if (skippedOpen > 0) {
+      notices.push(
+        `Skipped ${skippedOpen} open-ended question(s) — only multiple-choice questions can be turned into study material.`
+      )
+    }
+    if (notices.length > 0) {
       await (supabase.from('files') as any)
-        .update({ processing_error: `Failed to process ${questionErrors.length} question(s): ${errorSummary}` })
+        .update({ processing_error: notices.join(' ') })
         .eq('id', fileId)
     }
 
@@ -653,6 +669,7 @@ async function processPastExamFile(
         fileRole,
         questionsCreated,
         questionsFlagged,
+        skippedOpen,
         questionErrors: questionErrors.length > 0 ? questionErrors : undefined,
       },
       { status: 200 }

@@ -54,4 +54,22 @@ describe('POST /api/generate-questions (past_exam, mock)', () => {
     expect(correct).toHaveLength(1)
     expect(correct[0].option_text).toContain('B.')
   })
+
+  // MCQ-only is deliberate, but dropping open questions silently is not: the
+  // file completes 'done' with fewer questions than the exam contained and
+  // nothing tells the user why. The mock exam has 1 mcq + 1 open.
+  it('reports skipped open-ended questions instead of dropping them silently', async () => {
+    const res = await post({ fileId: 'pf1', fileRole: 'past_exam' })
+    const json = await res.json()
+    expect(json.skippedOpen).toBe(1)
+
+    const store = getMockStore()
+    // No 'open' question was persisted as study material.
+    expect(store.table('questions')).toHaveLength(1)
+
+    // File still succeeds — the notice rides along, it is not a failure.
+    const file = store.table('files').find((f) => f.id === 'pf1')
+    expect(file!.processing_status).toBe('done')
+    expect(file!.processing_error).toMatch(/Skipped 1 open-ended question/)
+  })
 })

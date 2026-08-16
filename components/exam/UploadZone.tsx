@@ -346,6 +346,11 @@ export function UploadZone({ examId }: UploadZoneProps) {
                     <div className="mt-1.5">
                       <StageLabel stage={toStage(f.status)} />
                     </div>
+                    {/* A 'done' file can still carry a notice (e.g. open-ended
+                        questions skipped). Not an error — the file succeeded. */}
+                    {f.status === 'done' && f.error ? (
+                      <p className="mt-1.5 text-xs text-ink-muted">ⓘ {f.error}</p>
+                    ) : null}
                   </>
                 )}
               </div>
@@ -361,7 +366,7 @@ export function UploadZone({ examId }: UploadZoneProps) {
                   : 'All files uploaded. Generate the quiz — past-exam questions are used as-is; AI questions are generated from theory only when no past exams were uploaded.'}
               </p>
               <Button variant="primary" className="w-full" onClick={() => { void handleGenerate() }}>
-                {isExistingExam ? 'Add theory + recalibrate' : 'Generate quiz'}
+                {isExistingExam ? 'Add theory + recalibrate' : 'Generate quiz and flashcards'}
               </Button>
             </div>
           )}

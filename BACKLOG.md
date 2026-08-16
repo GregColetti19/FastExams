@@ -7,6 +7,10 @@ assumption — don't let it live only in a commit message or someone's head.
 Status: 🔴 blocker · 🟠 important · 🟡 nice-to-have · 🔵 assumption to revisit
 Last updated: 2026-08-13
 
+> **Start here:** [Open items, ranked](#open-items-ranked-2026-08-13) — every open
+> item in priority order, verified against the code on 2026-08-13. The sections
+> below it are the detail/history each ranked line points into.
+
 ---
 
 ## Thresholds & magic numbers (untuned — need an eval set)
@@ -51,11 +55,14 @@ force passes). Validate + tune against a labeled eval set across multiple exams.
   threaded into question/flashcard/topic prompts; `questionStylesFor(domain)`
   replaces the hardcoded "clinical reasoning" style. A regression test asserts no
   prompt contains medical/clinical/patient wording.
-- [ ] 🔵 **MCQ format = lettered options A–E.** `optionLetter()` (`app/api/generate-questions/route.ts:20`,
-  used at line 546) + `is_correct` matching assume "A. ...", "B) ...".
-  2026-07-18 check: unchanged, current intentional design — not a defect, just
-  an assumption to keep in mind if non-lettered formats are ever needed.
-  Non-lettered / numbered / open formats not handled for auto-answer.
+- [ ] 🔵 **MCQ format = lettered options A–E.** `optionLetter()` + `is_correct`
+  matching assume "A. ...", "B) ...". **2026-08-13 recheck: now duplicated in TWO
+  routes**, not one as previously recorded — `app/api/generate-questions/route.ts:19`
+  (used line 597) and `app/api/recalibrate/route.ts:10` (used line 158). Same
+  function, copy-pasted; any format change has to touch both.
+  Current intentional design — not a defect, just an assumption to keep in mind if
+  non-lettered formats are ever needed. Non-lettered / numbered / open formats not
+  handled for auto-answer.
 - [x] ✅ **Embedding provider — decided 2026-08-13: `qwen/qwen3-embedding-8b` @1536.**
   MRL truncation from native 4096 verified live, so this stayed a pure env swap:
   `chunks.embedding`/`questions.embedding` remain `vector(1536)` + ivfflat, no
@@ -73,31 +80,39 @@ force passes). Validate + tune against a labeled eval set across multiple exams.
 
 - [x] ✅ **Theory → subtopic mapping** (was: string-match collapsed all chunks to one bin). Replaced 2026-06-13 with seeded embedding refinement.
 - [x] ✅ **Embedding speed.** 2026-07-06: (a) `embedTexts` batches now run in parallel via `Promise.all` (lib/ai/embeddings.ts); (b) past-exam grounding uses pgvector ANN search via `match_chunks` RPC (migration 009, lib/ai/match-to-theory.ts `matchChunkForQuestion`) instead of fetching all chunks + brute-force JS cosine. Mock path unchanged (brute-force fallback when `isEmbedMockEnabled()`). **Migration 009 must be applied to real Supabase to activate pgvector path.**
-- [ ] 🟡 **`process-file` async work is fire-and-forget — partially fixed.** 2026-07-18 check:
-  `app/api/process-file/route.ts` no longer uses `setImmediate` (pipeline now
-  awaited synchronously in the request handler). `app/api/generate-exam/route.ts:74`
-  still does — question generation is still fire-and-forget. Not a real queue;
-  failures only surface via DB status.
+- [ ] 🟡 **Async work is fire-and-forget — partially fixed, TWO sites remain.**
+  2026-07-18: `app/api/process-file/route.ts` no longer uses `setImmediate`
+  (pipeline awaited synchronously in the handler). **2026-08-13 recheck: the
+  backlog undercounted — `setImmediate` is still live in `app/api/generate-exam/route.ts:74`
+  (question generation) AND `app/api/upload/route.ts:127`**, which the previous
+  entry missed entirely. Not a real queue; failures only surface via DB status.
 - [ ] 🟡 **`extractLargeExam` splits on a question-number regex** (`^\d+\.` etc.); brittle for exams numbered differently.
-- [ ] 🔴 **Open-answer / multi-part exams are unsupported end to end.** Found 2026-08-12 while
-  selecting eval material (`TestData/NAPDE/NAPDE_Exams/`, MSc Numerical Analysis for PDEs, Politecnico).
-  Those exams are 3 questions × sub-parts (a)–(d), open-ended and proof-based
-  ("Analyze (with proofs) the stability properties…", "Derive the Steklov-Poincaré problem.
-  Provide the complete proof."), some requiring MATLAB code. Nothing in the answering path fits:
-  - `answerExamQuestion` (lib/ai/answer-exam-question.ts) is MCQ-shaped throughout —
-    `options: string[]` in, `choice: "B"` / `choice_text` out. No options exist in these exams.
-  - `PROMPTS.pastExamExtraction` (lib/ai/prompts.ts) emits `type: 'mcq' | 'open'` but has **no
-    representation for sub-parts** — a 4-part question either flattens into one blob or splits
-    into 4 orphaned questions that each lose the shared stem.
-  - The FSRS/quiz UI assumes a gradeable discrete choice; an open answer has no `correct_answer`
-    to compare against.
-  This is a **product gap, not a test gap**: the app targets generic university exams, and
-  open/multi-part/proof-based is what a large share of real university exams look like
-  (engineering, maths, humanities). MCQ-only answering silently excludes them.
-  Needs: a sub-part-aware extraction schema (stem + parts), an open-answer variant of
-  answer-determination that keeps the never-guess/grounding invariant but drops `choice`,
-  and a UI/grading story for non-discrete answers (rubric? self-grade? model-graded with
-  citation?). **Blocks** using NAPDE-style material as eval data for answer-determination.
+- [x] ✅ **Open-answer questions are now REPORTED, not silently dropped — 2026-08-13.**
+  **Scope decision (2026-08-13): MCQ-only is the intended product, not a gap.** If a
+  user uploads an exam with no closed questions there is little the app can do — an
+  open/proof-based answer has no discrete `correct_answer` to grade against. What was
+  a real defect is that the drop was *silent*: `generate-questions/route.ts` filtered
+  `type === 'mcq'` and discarded the rest, so a NAPDE-style upload processed green,
+  finished `done`, and produced zero questions with no explanation.
+
+  Fixed: the past-exam path now counts skipped opens (`skippedOpen`), returns it in
+  the response, and writes a plain-language notice into `files.processing_error`
+  ("Skipped N open-ended question(s) — only multiple-choice questions can be turned
+  into study material."). `UploadZone` renders a notice on `done` files — previously
+  `f.error` was only shown when `status === 'error'`, so a notice on a successful
+  file would have been invisible. Failure text and skip notices compose in that one
+  field rather than overwriting each other. Test:
+  `app/api/__tests__/generate-questions-pastexam.test.ts` (mock exam = 1 mcq + 1 open
+  → asserts `skippedOpen === 1`, one question persisted, status still `done`).
+
+  Still deliberately NOT built (revisit only if open-answer study is ever wanted as a
+  product): sub-part-aware extraction (`PROMPTS.pastExamExtraction` has no
+  representation for stems with parts (a)–(d) — a 4-part question flattens into one
+  blob or splits into 4 orphans), an open variant of `answerExamQuestion` (MCQ-shaped
+  throughout: `options: string[]` in, `choice: "B"` out), and a grading story for
+  non-discrete answers (rubric? self-grade? model-graded with citation?).
+  Note this still **blocks** using NAPDE-style material as eval data for
+  answer-determination — see `TestData/NAPDE/NAPDE_Exams/`.
 - [ ] 🟠 **Math/formula fidelity through PDF→markdown is poor.** Found 2026-08-12 converting
   NAPDE exams via markitdown: subscripts detach (`Ω ∩Ω = ∅` for `Ω₁ ∩ Ω₂`), norms split across
   lines (`∥β∥ L∞(K)`), `(cid:40)` artifacts for unmapped glyphs, matrices/cases flattened.
@@ -168,7 +183,12 @@ force passes). Validate + tune against a labeled eval set across multiple exams.
 - [x] ✅ **Front-end on mock DB (item 4).** Done 2026-06-14.
 - [ ] 🟡 **Visual / image questions.** On hold. Needs image↔text matching — reuses the embedding retrieval layer.
 - [ ] 🟡 **Cost optimization.** Haiku tiering for cheap text steps + prompt caching on stable system prompts / theory.
-- [ ] 🟡 **Spaced repetition algorithm.** Simple interval×2.5 in lib/scheduling; replaceable with FSRS later.
+- [x] ✅ **Spaced repetition algorithm — done, backlog was stale.** FSRS shipped in
+  commit `6401075`; `lib/fsrs.ts` wraps `ts-fsrs` and is wired into the write path
+  (`app/api/record-attempt/route.ts`), FlashcardEngine, FlashCard, RatingControl.
+  **2026-08-13:** the old interval×2.5 `lib/scheduling/spaced-repetition.ts` had
+  zero non-test importers — deleted it and its test. `lib/scheduling/session-queue.ts`
+  stays (live, used by QuizEngine).
 
 ## Migrations applied to real Supabase (2026-07-14)
 
@@ -177,6 +197,35 @@ All 9 migrations (001-009) confirmed applied to the real Supabase project
 outside CLI tracking); 009 (`match_chunks` RPC — pgvector retrieval path) was
 the actual gap and has now been applied + verified. CLI migration history
 repaired so `supabase migration list` reflects reality.
+
+- [x] ✅ **010, 011, 012 — found unapplied and APPLIED 2026-08-13.** Caught during a
+  backlog audit: all three existed on disk, backed already-shipped code, and none of
+  their columns existed on `zwyhbjkqxwpqecpabhbs`. **The app was silently broken
+  against real Supabase while green on the mock DB** — `record-attempt` writes FSRS
+  state on every attempt, `infer-subject` writes `exams.subject` at ingestion, and
+  the embedding writer sets provenance columns; all three targeted missing columns.
+
+  Applied via `supabase db push --include-all`. Ledger now shows `remote` set for
+  001–012. Post-apply verification:
+
+  | check | result |
+  |---|---|
+  | questions backfilled (`fsrs_state=2`) | 50 — exactly the pre-count of `times_seen > 0` |
+  | questions left New (`fsrs_state=0`) | 669 of 719 |
+  | `reps`/`lapses`/`stability`/`difficulty` mismatches | 0 on all four |
+  | seen-but-still-New / unseen-but-Review | 0 / 0 |
+  | chunks stamped `text-embedding-3-small`@1536 | 560 |
+  | exams `active=true` | 1 |
+
+  **Connection gotcha, for next time:** `supabase migration list` (and any CLI
+  command using the default host) times out from here — `db.<ref>.supabase.co`
+  resolves **IPv6-only**. The pooler is IPv4 and works:
+  `postgresql://postgres.<ref>:$SUPABASE_DB_PASSWORD@aws-0-eu-west-3.pooler.supabase.com:5432/postgres`
+  passed as `--db-url`. Also: the service-role key returns `42501 permission denied`
+  on plain REST table reads, so row queries can't confirm schema — the OpenAPI doc
+  at `/rest/v1/` can (it lists real columns), and `supabase db query --db-url` works
+  for arbitrary SQL. Pre-migration backup of the 50 at-risk SM-2 rows was taken;
+  010 only reads those columns and writes new ones, so it was a true rollback source.
 
 ⚠️ **RLS is disabled on all tables** on this real project (migration 003 —
 matches mock-DB dev behavior). Fine for solo dev/testing; revisit before any
@@ -327,4 +376,96 @@ Both defects were live and student-visible before this.
 - [x] ✅ OpenRouter vs direct Anthropic — routing is now per-model-id, so both work
   in one run (`claude-*` → Anthropic SDK, vendor-prefixed → OpenRouter).
 - [x] ✅ Cost of shipping live — **~$0.30/exam**, measured not estimated.
+
+---
+
+## Open items, ranked (2026-08-13)
+
+Every open item, ordered by importance. Verified against the code on 2026-08-13 —
+each line states what was actually found, not what was previously assumed.
+Rank is *do-next order*: severity weighted by whether the thing is silently wrong
+for a real user today.
+
+### Tier 1 — correctness risk, users affected now
+
+1. ✅ ~~**Migrations 010, 011, 012 not applied.**~~ **DONE 2026-08-13** — found
+   unapplied during the audit, applied and verified the same day (50 rows
+   backfilled, 0 integrity mismatches). → "Migrations applied to real Supabase"
+2. ✅ ~~**Open-answer / multi-part exams unsupported.**~~ **Rescoped + fixed 2026-08-13.**
+   MCQ-only is the intended product, not a gap — an open answer has nothing to grade
+   against. The real defect was the *silent* drop; open questions are now counted and
+   reported to the user, file still completes `done`. Full open-answer support stays
+   deliberately unbuilt. → "Known broken / limited on real data"
+3. 🟠 **No accuracy measurement.** The harness is label-free — it ranks models by
+   agreement, not correctness. `results/divergences.json` (52 questions, 7 with no
+   majority) converts it to accuracy for ~1h of hand-labelling. Blocks #4 and #8.
+   → "Still open"
+4. 🟠 **Absolute vs relative grounding gate.** Relative gate implemented behind
+   `RETRIEVAL_RELATIVE_GATES` (confirmed default OFF, `lib/ai/grounding-gate.ts:26`).
+   **Risk: loosening it wrong means answering from insufficient grounding** — the
+   never-guess invariant is the product's core claim. Needs #3 before flipping.
+   → "Still open"
+5. 🟠 **Math/formula fidelity through PDF→markdown is poor.** Confirmed
+   `converter/main.py:41` is MarkItDown-first, Docling only as a sparse-text
+   fallback — the A/B was never run. Mangled source text corrupts both retrieval
+   and verbatim `source_quote` grounding, so it silently undermines #4.
+   → "Known broken / limited on real data"
+
+### Tier 2 — cost and real-usage friction
+
+6. 🟡→🟠 **Prompt caching + tiebreak batching.** Confirmed zero `cache_control`
+   anywhere in `lib/` or `app/`. ~1.18M input tokens/exam resent per question;
+   caching should cut input cost ~90%, tiebreak batching 125 calls → ~7.
+   **Suggest promoting to 🟠: this is the single biggest remaining cost lever,
+   larger than any model swap, and it is pure engineering with no eval dependency.**
+   → "Still open"
+7. 🟠 **Customizable daily question target.** 524-card review pile for one day/one
+   exam is the headline usability problem. Confirmed nothing exists (no
+   `daily_target` anywhere). → "UX updates (18-07-2026)"
+8. 🟠 **Per-subject retrieval profiles.** `getRetrievalConfig` still takes
+   `_opts` and ignores subject/language (verified). `exams.subject` exists
+   (migration 012) so the prerequisite is met; needs `[retrieval]` logs across
+   more exams, and ideally #3. → "Still open"
+9. 🟠 **Deployment on app/mobile.** Noted, unscoped, no work started.
+   → "UX updates (18-07-2026)"
+10. 🟡 **Async work fire-and-forget — two sites.** `generate-exam/route.ts:74` and
+    `upload/route.ts:127`. Failures only surface via DB status; no queue, no retry.
+    → "Known broken / limited on real data"
+11. 🟡 **Truncation warns but isn't handled.** `lib/ai/usage.ts:31` logs on
+    `finish_reason=length` and does nothing — no retry with higher `max_tokens`
+    or smaller batch. Silent partial output. → "Still open"
+
+### Tier 3 — known limits, deliberate
+
+12. 🟡 **`extractLargeExam` question-number regex.** Brittle for exams numbered
+    differently (`lib/ai/extract-past-exam-questions.ts:90`). Overlaps #2 — likely
+    fixed as part of a sub-part-aware extraction schema rather than on its own.
+13. 🟡 **Visual / image questions.** `generateQuestionsFromImage` exists but
+    `lib/ai/generate-questions.ts:271` is still a TODO stub (never fetches from
+    Storage). Reuses the embedding retrieval layer. → "Deferred features"
+14. 🟡 **Optional timer.** Nothing exists. → "UX updates (18-07-2026)"
+15. 🔵 **Mock user ID duplicated in 2 places.** `FlashcardEngine.tsx:17` +
+    `QuizEngine.tsx:45`. Confirmed exactly 2. Trivial extraction; blocks nothing
+    until real auth lands. → "Hardcoded assumptions to revisit"
+16. 🔵 **MCQ lettered A–E assumption, now in 2 routes.** `optionLetter()`
+    copy-pasted into `generate-questions:19` and `recalibrate:10`. Intentional
+    design, but the duplication is real debt. → "Hardcoded assumptions to revisit"
+17. 🔵 **Mastery-over-time has no trend data.** No `mastery_snapshots` table
+    (migrations stop at 012). Left honestly absent from Analytics rather than
+    faked. → "UX / frontend"
+18. 🔵 **Untuned retrieval thresholds.** Config-driven and visible in
+    `lib/ai/retrieval-config.ts`, still default-valued. Subsumed by #3/#8 — no
+    independent action. → "Thresholds & magic numbers"
+19. 🔵 **Target Date dropped.** No schema column. Revisit with study-scheduling.
+20. 🔵 **Input formats: PDF + PPTX only.** DOCX/TXT/URL deferred.
+21. 🔵 **Shuffle mode — worth it?** Open question, not a task. Note:
+    `shuffleOptions` in the codebase is the answer-position de-bias fix, unrelated
+    to a user-facing shuffle mode.
+
+### Also worth noting
+
+⚠️ **RLS disabled on all tables** (migration 003) on the real project. Fine for
+solo dev; **must** be revisited before any multi-user or public deploy — that is a
+data-exposure issue the moment a second user exists, not a nice-to-have.
+Not ranked above because it is a deploy gate, not current work.
 
