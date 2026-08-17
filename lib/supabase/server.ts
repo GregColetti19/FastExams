@@ -31,29 +31,3 @@ export async function createServerClient_() {
   )
 }
 
-export async function createServerClientServiceRole() {
-  if (isMockDb()) return createFileMockClient() as any
-  assertRealConfig(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
-  const cookieStore = await cookies()
-
-  return createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          } catch {
-            // Ignore in static generation
-          }
-        },
-      },
-    }
-  )
-}

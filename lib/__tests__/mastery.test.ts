@@ -10,7 +10,6 @@ describe("masteryColor", () => {
 
   it("never returns a red/alarm color at any value", () => {
     // no-red invariant: scan the whole 0–100 range in both modes
-    const reds = ["#f", "#e0", "#d0", "#c0"]; // crude: high-R low-G/B prefixes we forbid for mastery
     for (const mode of ["dark", "light"] as const) {
       for (let p = 0; p <= 99; p++) {
         const c = masteryColor(p, mode).toLowerCase();

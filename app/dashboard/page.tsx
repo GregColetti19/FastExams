@@ -8,9 +8,19 @@ export const dynamic = 'force-dynamic'
 export default async function DashboardPage() {
   const supabase = await createServerClient_()
 
+  // Middleware guarantees a session here; the filter is belt-and-braces next to
+  // RLS so this stays scoped even if enforcement is toggled off for debugging.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
   const [{ data: exams, error: examsError }, { data: topics }, { data: subtopics }, { data: questions }] =
     await Promise.all([
-      supabase.from('exams').select('*').order('created_at', { ascending: false }) as any,
+      supabase
+        .from('exams')
+        .select('*')
+        .eq('user_id', user?.id ?? '')
+        .order('created_at', { ascending: false }) as any,
       supabase.from('topics').select('*') as any,
       supabase.from('subtopics').select('*') as any,
       supabase.from('questions').select('*') as any,

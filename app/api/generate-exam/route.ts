@@ -76,7 +76,10 @@ export async function POST(request: NextRequest) {
         try {
           const res = await fetch(`${base}/api/generate-questions`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '',
+            },
             body: JSON.stringify({ fileId: f.id, fileRole: f.file_role }),
             signal: AbortSignal.timeout(20 * 60 * 1000), // 20 min per file
           })
@@ -106,7 +109,10 @@ export async function POST(request: NextRequest) {
         try {
           const res = await fetch(`${base}/api/recalibrate`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '',
+            },
             body: JSON.stringify({ examId }),
             signal: AbortSignal.timeout(20 * 60 * 1000),
           })

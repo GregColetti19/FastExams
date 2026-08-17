@@ -47,7 +47,7 @@ describe("review", () => {
   });
 
   it("spaces successful Review reviews out (interval grows day over day)", () => {
-    let c = graduate();
+    const c = graduate();
     expect(c.state).toBe(State.Review);
     const firstInterval = c.due.getTime() - c.last_review!.getTime();
     // one more good review from a graduated card → a longer interval

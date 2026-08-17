@@ -40,19 +40,26 @@ export function QuizEngine({ subtopicId, questionIds, topicName }: QuizEnginePro
     const initializeQuiz = async () => {
       try {
         // Fire session creation and question fetches in parallel.
-        // Session insert is best-effort — quiz runs even if it fails (no auth in dev).
-        // Mock user matches the hardcoded dev user in /api/upload (profiles row required).
-        const MOCK_USER_ID = '6a7223fc-a96d-434a-9125-98ba6e4daca3'
-        const sessionPromise = (supabase.from('study_sessions') as any)
-          .insert([{ subtopic_id: subtopicId, session_type: 'quiz', user_id: MOCK_USER_ID }])
-          .select()
-          .then(({ data, error }: any) => {
-            if (error) console.warn('study_sessions insert failed (non-fatal):', error.message)
-            else setSessionId(data?.[0]?.id ?? '')
+        // Session insert is best-effort — the quiz still runs if it fails, so a
+        // missing session only costs attempt attribution, not the study run.
+        const sessionPromise = supabase.auth
+          .getUser()
+          .then(({ data: { user } }: any) => {
+            if (!user) {
+              console.warn('No session user — study_sessions insert skipped')
+              return
+            }
+            return (supabase.from('study_sessions') as any)
+              .insert([{ subtopic_id: subtopicId, session_type: 'quiz', user_id: user.id }])
+              .select()
+              .then(({ data, error }: any) => {
+                if (error) console.warn('study_sessions insert failed (non-fatal):', error.message)
+                else setSessionId(data?.[0]?.id ?? '')
+              })
           })
           .catch((e: any) => console.warn('study_sessions error (non-fatal):', e))
 
-        const [{ data: questionsData, error: qError }, { data: optionsData, error: oError }] =
+        const [{ data: questionsData, error: qError }, { data: optionsData }] =
           await Promise.all([
             (supabase.from('questions').select('*').in('id', questionIds)) as any,
             (supabase.from('question_options').select('*').in('question_id', questionIds)) as any,

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { POST } from '@/app/api/record-attempt/route'
 import { getMockStore, resetMockStore } from '@/lib/supabase/mock/store'
+import { Rating } from '@/lib/fsrs'
 
 // Drive the route with a minimal stub — it only calls request.json().
 function post(body: any) {
@@ -71,13 +72,10 @@ describe('POST /api/record-attempt (mock DB, FSRS scheduler)', () => {
 
   it('an Again grade records a lapse once the card has graduated to Review', async () => {
     // graduate q1 out of short-term learning steps first
-    let lastDue = new Date()
     for (let i = 0; i < 8; i++) {
       await post({ sessionId: 'sess1', questionId: 'q1', isCorrect: true })
       const store = getMockStore()
-      const q = store.table('questions')[0]
-      if (q.fsrs_state === 2) break // Review
-      lastDue = new Date(q.next_review_at)
+      if (store.table('questions')[0].fsrs_state === 2) break // Review
     }
     const store = getMockStore()
     const lapsesBefore = store.table('questions')[0].lapses
@@ -94,6 +92,49 @@ describe('POST /api/record-attempt (mock DB, FSRS scheduler)', () => {
   it('returns 404 when the question does not exist', async () => {
     const res = await post({ sessionId: 'sess1', questionId: 'ghost', isCorrect: true })
     expect(res.status).toBe(404)
+  })
+
+  describe('explicit grade (flashcard self-rating, 4-way FSRS scale)', () => {
+    it('accepts grade instead of isCorrect and schedules accordingly', async () => {
+      const res = await post({ sessionId: 'sess1', questionId: 'q1', grade: Rating.Easy })
+      expect(res.status).toBe(200)
+      const store = getMockStore()
+      const q = store.table('questions')[0]
+      expect(q.reps).toBe(1)
+      expect(q.stability).toBeGreaterThan(0)
+      // Easy grants a longer interval than Good would for the same starting card
+      const easyDue = new Date(q.next_review_at).getTime()
+
+      resetMockStore()
+      const store2 = getMockStore()
+      store2.seed('subtopics', [{ id: 's1', topic_id: 't1', name: 'Heart', mastery_score: 0 }])
+      store2.seed('questions', [{ id: 'q1', subtopic_id: 's1', question_text: 'Q', justification: 'J', times_seen: 0, times_correct: 0, current_interval_days: 1, last_seen_at: null, ...FSRS_DEFAULTS }])
+      await post({ questionId: 'q1', grade: Rating.Good })
+      const goodDue = new Date(store2.table('questions')[0].next_review_at).getTime()
+      expect(easyDue).toBeGreaterThanOrEqual(goodDue)
+    })
+
+    it('Again grade marks the attempt incorrect even without isCorrect', async () => {
+      const res = await post({ sessionId: 'sess1', questionId: 'q1', grade: Rating.Again })
+      expect(res.status).toBe(200)
+      const store = getMockStore()
+      expect(store.table('question_attempts')[0].is_correct).toBe(false)
+      expect(store.table('questions')[0].times_correct).toBe(0)
+    })
+
+    it('Hard/Good/Easy grades mark the attempt correct', async () => {
+      await post({ sessionId: 'sess1', questionId: 'q1', grade: Rating.Hard })
+      const store = getMockStore()
+      expect(store.table('question_attempts')[0].is_correct).toBe(true)
+      expect(store.table('questions')[0].times_correct).toBe(1)
+    })
+
+    it('an invalid grade value falls back to binary via isCorrect', async () => {
+      const res = await post({ sessionId: 'sess1', questionId: 'q1', grade: 99, isCorrect: true })
+      expect(res.status).toBe(200)
+      const store = getMockStore()
+      expect(store.table('question_attempts')[0].is_correct).toBe(true)
+    })
   })
 
   it('aggregates subtopic mastery across all its questions', async () => {

@@ -3,12 +3,14 @@
 import { useState } from 'react'
 
 interface FlagButtonProps {
+  // Identifies the flagged question for callers; the flag itself is applied by
+  // onFlag, which already closes over it, so this component never reads it.
   questionId: string
   subtopics: Array<{ id: string; name: string }>
   onFlag: (action: 'reassign' | 'poor_quality', subtopicId?: string) => Promise<void>
 }
 
-export function FlagButton({ questionId, subtopics, onFlag }: FlagButtonProps) {
+export function FlagButton({ subtopics, onFlag }: FlagButtonProps) {
   const [open, setOpen] = useState(false)
   const [selectedSubtopic, setSelectedSubtopic] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)

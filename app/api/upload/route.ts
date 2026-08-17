@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient_ } from '@/lib/supabase/server'
+import { checkUploadQuota, windowStart } from '@/lib/upload-quota'
 import { FileRole } from '@/types'
 
 const MAX_FILE_SIZE_MB = parseInt(process.env.MAX_FILE_SIZE_MB || '300')
@@ -8,8 +9,13 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerClient_()
 
-    // Dev mode: skip auth, use mock user
-    const mockUserId = '6a7223fc-a96d-434a-9125-98ba6e4daca3'
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, { status: 401 })
+    }
 
     const formData = await request.formData()
     const file = formData.get('file') as File
@@ -53,15 +59,42 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify exam exists (skip ownership check in dev mode)
+    // Verify the exam exists AND belongs to the caller. RLS enforces this too;
+    // the explicit filter keeps it correct if RLS is ever toggled off.
     const { data: exam } = await supabase
       .from('exams')
       .select('id')
       .eq('id', examId)
+      .eq('user_id', user.id)
       .single() as any
 
     if (!exam) {
       return NextResponse.json({ error: 'Exam not found', code: 'EXAM_NOT_FOUND' }, { status: 404 })
+    }
+
+    // Daily upload budget. Checked before the storage write and before any AI
+    // work, so a rejected upload costs nothing. RLS scopes `files` to the
+    // caller, making this sum inherently per-user.
+    const { data: recentFiles } = await supabase
+      .from('files')
+      .select('size_bytes')
+      .gte('created_at', windowStart().toISOString()) as any
+
+    const quota = checkUploadQuota(
+      ((recentFiles ?? []) as Array<{ size_bytes: number | null }>).map((f) => f.size_bytes ?? 0),
+      file.size
+    )
+
+    if (!quota.allowed) {
+      return NextResponse.json(
+        {
+          error:
+            `Daily upload limit reached (${quota.usedMB}MB of ${quota.budgetMB}MB used). ` +
+            `${quota.remainingMB}MB left today — try again tomorrow or upload a smaller file.`,
+          code: 'QUOTA_EXCEEDED',
+        },
+        { status: 429 }
+      )
     }
 
     // Upload file to Supabase Storage
@@ -128,7 +161,10 @@ export async function POST(request: NextRequest) {
       try {
         await fetch(`${request.nextUrl.origin}/api/process-file`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '',
+          },
           body: JSON.stringify({ fileId: newFile.id, fileRole }),
         })
       } catch (error) {

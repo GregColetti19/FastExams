@@ -20,15 +20,21 @@ export function NewExamDialog() {
     setLoading(true)
 
     try {
-      // Dev mode: use mock user
-      const mockUserId = '6a7223fc-a96d-434a-9125-98ba6e4daca3'
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) {
+        setError('Your session expired. Please sign in again.')
+        return
+      }
 
       const { data, error: dbError } = (await supabase
         .from('exams')
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .insert([
           {
-            user_id: mockUserId,
+            user_id: user.id,
             name,
             description: description || null,
           },

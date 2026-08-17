@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Question } from '@/types'
+import { Rating, type Grade } from '@/lib/fsrs'
 import { FlashCard } from './FlashCard'
 
 interface FlashcardEngineProps {
@@ -12,15 +13,12 @@ interface FlashcardEngineProps {
 
 type State = 'loading' | 'in_progress' | 'completed'
 
-// Matches the hardcoded dev user in /api/upload and QuizEngine.
-const MOCK_USER_ID = '6a7223fc-a96d-434a-9125-98ba6e4daca3'
-
 export function FlashcardEngine({ subtopicId, examId }: FlashcardEngineProps) {
   const [state, setState] = useState<State>('loading')
   const [sessionId, setSessionId] = useState<string>('')
   const [flashcards, setFlashcards] = useState<Question[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [answers, setAnswers] = useState<Record<string, boolean>>({})
+  const [answers, setAnswers] = useState<Record<string, Grade>>({})
   const [error, setError] = useState('')
   const supabase = useMemo(() => createClient(), [])
   const initedRef = useRef(false)
@@ -32,11 +30,16 @@ export function FlashcardEngine({ subtopicId, examId }: FlashcardEngineProps) {
     const init = async () => {
       try {
         // Session creation best-effort — cards work even if this fails.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: sessionData } = await (supabase.from('study_sessions') as any)
-          .insert([{ subtopic_id: subtopicId, session_type: 'flashcard', user_id: MOCK_USER_ID }])
-          .select() as any
-        if (sessionData?.[0]?.id) setSessionId(sessionData[0].id)
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        if (user) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: sessionData } = await (supabase.from('study_sessions') as any)
+            .insert([{ subtopic_id: subtopicId, session_type: 'flashcard', user_id: user.id }])
+            .select() as any
+          if (sessionData?.[0]?.id) setSessionId(sessionData[0].id)
+        }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: cards, error: qError } = await (supabase
@@ -60,11 +63,11 @@ export function FlashcardEngine({ subtopicId, examId }: FlashcardEngineProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const handleAnswer = (isCorrect: boolean) => {
+  const handleRate = (grade: Grade) => {
     const currentCard = flashcards[currentIndex]
 
     // Update local state immediately — don't wait on the API.
-    setAnswers((prev) => ({ ...prev, [currentCard.id]: isCorrect }))
+    setAnswers((prev) => ({ ...prev, [currentCard.id]: grade }))
 
     if (currentIndex < flashcards.length - 1) {
       setCurrentIndex((i) => i + 1)
@@ -80,7 +83,7 @@ export function FlashcardEngine({ subtopicId, examId }: FlashcardEngineProps) {
         sessionId: sessionId || null,
         questionId: currentCard.id,
         selectedOptionId: null,
-        isCorrect,
+        grade,
         timeSpentSeconds: null,
       }),
     }).catch((err) => console.error('record-attempt failed (non-fatal):', err))
@@ -95,7 +98,7 @@ export function FlashcardEngine({ subtopicId, examId }: FlashcardEngineProps) {
   }
 
   if (state === 'completed') {
-    const correctCount = Object.values(answers).filter(Boolean).length
+    const correctCount = Object.values(answers).filter((g) => g !== Rating.Again).length
     const total = flashcards.length
     const pct = Math.round((correctCount / total) * 100)
 
@@ -162,8 +165,7 @@ export function FlashcardEngine({ subtopicId, examId }: FlashcardEngineProps) {
         key={currentCard.id}
         front={currentCard.question_text}
         back={currentCard.justification}
-        onGotIt={() => handleAnswer(true)}
-        onMissedIt={() => handleAnswer(false)}
+        onRate={handleRate}
       />
     </div>
   )

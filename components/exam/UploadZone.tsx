@@ -12,6 +12,12 @@ import { cn } from '@/lib/utils'
 // If any file stays in generating_questions longer than this, surface a retry.
 const STALL_TIMEOUT_MS = 10 * 60 * 1000
 
+// Conversion (pending/processing) is triggered by a detached call from
+// /api/upload, so a dropped request or a deploy mid-processing leaves the file
+// at 'pending' forever with nothing to retry it. Longer than STALL_TIMEOUT_MS
+// because a large scanned PDF escalating to Docling is legitimately slow.
+const PROCESSING_TIMEOUT_MS = 15 * 60 * 1000
+
 interface UploadZoneProps {
   examId: string
 }
@@ -34,12 +40,16 @@ export function UploadZone({ examId }: UploadZoneProps) {
   const [uploading, setUploading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [stalled, setStalled] = useState(false)
+  // Set when conversion stalls at pending/processing. Distinct from `stalled`
+  // (generation): there is no generate-retry to offer, only re-upload.
+  const [processingStalled, setProcessingStalled] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [files, setFiles] = useState<Array<{ id: string; name: string; status: ProcessingStatus; error?: string }>>([])
   const [pollInterval, setPollInterval] = useState<number | null>(null)
   const [isExistingExam, setIsExistingExam] = useState(false)
   const generatingStartedAt = useRef<number | null>(null)
+  const processingStartedAt = useRef<number | null>(null)
   const supabase = createClient()
 
   // Detect if this exam already has generated content (topics exist).
@@ -98,6 +108,20 @@ export function UploadZone({ examId }: UploadZoneProps) {
           setGenerating(false)
           setStalled(true)
         }
+      }
+
+      // Same for conversion. Without this a file whose detached process-file
+      // call never landed polls forever and the tester just sees a spinner.
+      const anyProcessing = updatedFiles.some(
+        (f) => f.status === 'pending' || f.status === 'processing'
+      )
+      if (anyProcessing && processingStartedAt.current !== null) {
+        if (Date.now() - processingStartedAt.current > PROCESSING_TIMEOUT_MS) {
+          setPollInterval(null)
+          setProcessingStalled(true)
+        }
+      } else if (!anyProcessing) {
+        processingStartedAt.current = null
       }
     }, 2000)
 
@@ -203,11 +227,19 @@ export function UploadZone({ examId }: UploadZoneProps) {
               status: 'pending' as ProcessingStatus,
             },
           ])
+          processingStartedAt.current = Date.now()
+          setProcessingStalled(false)
           setPollInterval(2000) // Start polling
         } else {
           try {
             const body = JSON.parse(xhr.responseText)
-            setUploadError(`Upload failed (${xhr.status}): ${body.error || xhr.statusText}`)
+            // Quota and auth are expected outcomes, not faults — show the
+            // server's message plainly instead of dressing it as a failure.
+            if (body.code === 'QUOTA_EXCEEDED' || body.code === 'UNAUTHORIZED') {
+              setUploadError(body.error)
+            } else {
+              setUploadError(`Upload failed (${xhr.status}): ${body.error || xhr.statusText}`)
+            }
           } catch {
             setUploadError(`Upload failed (${xhr.status}): ${xhr.statusText}`)
           }
@@ -387,6 +419,16 @@ export function UploadZone({ examId }: UploadZoneProps) {
               <Button variant="primary" className="w-full" onClick={() => { void handleGenerate(true) }}>
                 Retry generation
               </Button>
+            </div>
+          )}
+
+          {processingStalled && (
+            <div className="mt-6 border-t border-border-hair pt-6">
+              <p className="text-sm text-ink-secondary">
+                <IconAlertTriangle size={14} className="mr-1.5 inline text-coral-soft" />
+                This file has been converting for a while and may have stopped. Upload it
+                again to restart — the stuck copy can be deleted from the exam page.
+              </p>
             </div>
           )}
         </div>

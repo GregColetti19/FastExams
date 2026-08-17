@@ -12,7 +12,7 @@
     "test:watch": "vitest",
     "test:ai": "vitest run lib/ai",
     "test:converter": "cd converter && ./venv/bin/python test_converter.py --direct",
-    "converter": "cd converter && ./venv/bin/python main.py",
+    "converter": "cd converter && CONVERTER_RELOAD=1 ./venv/bin/python main.py",
     "dev:all": "concurrently -n next,converter -c blue,green \"next dev\" \"npm run converter\"",
     "dev:seed": "node scripts/seed-dev.mjs",
     "dev:mock": "DB_MODE=mock NEXT_PUBLIC_DB_MODE=mock DEV_DB_PERSIST=1 concurrently -n next,converter -c blue,green \"next dev\" \"npm run converter\"",

@@ -7,9 +7,14 @@ export const dynamic = 'force-dynamic'
 export default async function AnalyticsPage() {
   const supabase = await createServerClient_()
 
+  // See DashboardPage: explicit scoping alongside RLS.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
   const [{ data: exams }, { data: topics }, { data: subtopics }, { data: questions }, { data: attempts }] =
     await Promise.all([
-      supabase.from('exams').select('*') as any,
+      supabase.from('exams').select('*').eq('user_id', user?.id ?? '') as any,
       supabase.from('topics').select('*') as any,
       supabase.from('subtopics').select('*') as any,
       supabase.from('questions').select('*') as any,

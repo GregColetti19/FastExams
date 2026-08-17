@@ -2,7 +2,6 @@
 import * as React from "react";
 import { useTheme } from "./ThemeProvider";
 import type { HorizonDay } from "@/lib/review/queue";
-import { masteryColor } from "@/lib/mastery";
 
 /**
  * Return horizon (§8.2, Cadence signature). Today = coral (act now), future = teal.

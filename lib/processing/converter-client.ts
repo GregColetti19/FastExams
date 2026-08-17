@@ -21,6 +21,9 @@ export async function convertFile(
 
     const response = await fetch(`${CONVERTER_URL}/convert`, {
       method: 'POST',
+      // Matches CONVERTER_SECRET on the converter service. Empty locally, where
+      // the service leaves the endpoint open.
+      headers: { 'x-converter-secret': process.env.CONVERTER_SECRET ?? '' },
       body: formData,
     })
 

@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from hmac import compare_digest
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header
 from fastapi.responses import JSONResponse
 import uvicorn
 
@@ -23,6 +25,10 @@ except ImportError:
 app = FastAPI(title="FastExams Converter", version="0.1.0")
 
 LOG_DEBUG = os.environ.get("CONVERTER_DEBUG", "").lower() in ("1", "true", "yes")
+
+# Shared secret required on /convert when set. Empty (the local-dev default)
+# leaves the endpoint open; every deployment must set it.
+CONVERTER_SECRET = os.environ.get("CONVERTER_SECRET", "")
 
 
 def extract_images_from_markdown(markdown_text: str) -> list[dict]:
@@ -93,6 +99,7 @@ def convert_pdf_or_pptx(file_bytes: bytes, file_type: str) -> dict:
 async def convert(
     file: UploadFile = File(...),
     file_type: str = Form(...),
+    x_converter_secret: str = Header(default=""),
 ):
     """
     Convert PDF or PPTX file to markdown.
@@ -100,6 +107,13 @@ async def convert(
     file_type: 'pdf' or 'pptx'
     """
     try:
+        # Shared-secret gate. Document conversion is expensive CPU work behind an
+        # unauthenticated endpoint, so an exposed instance is free compute for
+        # anyone who finds it. Unset secret = open, which keeps local dev working;
+        # deployments must set CONVERTER_SECRET (see Dockerfile).
+        if CONVERTER_SECRET and not compare_digest(x_converter_secret, CONVERTER_SECRET):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
         if LOG_DEBUG:
             print(f"[converter] /convert: file={file.filename}, file_type={file_type}", flush=True)
 
@@ -132,4 +146,11 @@ async def health():
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+    # reload= is the dev file-watcher: it forks a second process and is unsafe
+    # in a container. PORT is set by the host (Railway assigns it); 8001 locally.
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "8001")),
+        reload=os.environ.get("CONVERTER_RELOAD", "").lower() in ("1", "true", "yes"),
+    )
