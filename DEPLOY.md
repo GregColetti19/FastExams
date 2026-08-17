@@ -10,6 +10,10 @@ would break. See the "Architecture constraints" section at the bottom.
 
 ---
 
+`.env.production.example` lists every variable each service needs, grouped by
+service and annotated. Copy from there into the Railway dashboard; the tables
+below are the same values in walkthrough order.
+
 ## 0. Before you start
 
 - Push the branch: Railway deploys from GitHub, not from your laptop.
