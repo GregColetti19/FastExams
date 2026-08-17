@@ -1,7 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { checkUploadQuota, windowStart } from '../upload-quota'
+import { checkUploadQuota, windowStart, DAILY_UPLOAD_BUDGET_MB } from '../upload-quota'
 
 const MB = 1024 * 1024
+
+describe('DAILY_UPLOAD_BUDGET_MB', () => {
+  it('leaves room for more than one upload at the 50MB per-file cap', () => {
+    // A budget below the per-file limit would reject every second upload; below
+    // the limit itself it would reject all of them.
+    expect(DAILY_UPLOAD_BUDGET_MB).toBeGreaterThan(50)
+  })
+})
 
 describe('checkUploadQuota', () => {
   it('allows an upload that fits in an unused budget', () => {

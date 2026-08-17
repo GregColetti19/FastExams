@@ -3,7 +3,11 @@ import { createServerClient_ } from '@/lib/supabase/server'
 import { checkUploadQuota, windowStart } from '@/lib/upload-quota'
 import { FileRole } from '@/types'
 
-const MAX_FILE_SIZE_MB = parseInt(process.env.MAX_FILE_SIZE_MB || '300')
+// 50MB is the Supabase free-tier per-file storage cap. Keeping the app limit at
+// the real ceiling means an oversized file is rejected instantly instead of
+// uploading for minutes and then 413ing at storage. Raise both together if the
+// project moves to a paid tier.
+const MAX_FILE_SIZE_MB = parseInt(process.env.MAX_FILE_SIZE_MB || '50')
 
 export async function POST(request: NextRequest) {
   try {

@@ -25,6 +25,19 @@ export async function register() {
       )
     }
 
+    // The server enforces MAX_FILE_SIZE_MB; the upload UI pre-checks against
+    // NEXT_PUBLIC_MAX_FILE_SIZE_MB. If they drift, files either upload in full
+    // only to be rejected, or get blocked client-side that the server allows.
+    const serverMax = process.env.MAX_FILE_SIZE_MB || '50'
+    const clientMax = process.env.NEXT_PUBLIC_MAX_FILE_SIZE_MB || '50'
+    if (serverMax !== clientMax) {
+      console.warn(
+        `[config] MAX_FILE_SIZE_MB (${serverMax}) != NEXT_PUBLIC_MAX_FILE_SIZE_MB ` +
+          `(${clientMax}). Set both to the same value — and no higher than the ` +
+          `storage bucket's per-file limit (50MB on the Supabase free tier).`
+      )
+    }
+
     const { checkSchema } = await import('./lib/supabase/schema-check')
     await checkSchema()
   }

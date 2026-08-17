@@ -13,6 +13,14 @@ Ignore every numbered file. Do **not** run them after it.
 
 It creates nothing destructively (no `DROP TABLE`) and is safe to re-run.
 
+### Storage bucket
+
+The schema does not create it. In Storage, add a **private** bucket named
+`uploads` with a per-file limit of **50MB** — the free-tier ceiling, and the
+value `MAX_FILE_SIZE_MB` / `NEXT_PUBLIC_MAX_FILE_SIZE_MB` must match. Setting
+the app limit higher makes oversized files upload in full before failing at
+storage with a 413.
+
 ## Existing project
 
 Keep applying the numbered migrations in order from wherever you are.

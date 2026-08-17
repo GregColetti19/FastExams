@@ -9,6 +9,11 @@ import { Button } from '@/components/cadence/Button'
 import { StepTrack, StageLabel, type UploadStage } from '@/components/cadence/StepTrack'
 import { cn } from '@/lib/utils'
 
+// Must match MAX_FILE_SIZE_MB on the server (and the storage bucket's own cap,
+// 50MB on the Supabase free tier). NEXT_PUBLIC_ because this is a client
+// component — the browser only sees NEXT_PUBLIC_* at runtime.
+const MAX_FILE_SIZE_MB = parseInt(process.env.NEXT_PUBLIC_MAX_FILE_SIZE_MB || '50')
+
 // If any file stays in generating_questions longer than this, surface a retry.
 const STALL_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -198,6 +203,18 @@ export function UploadZone({ examId }: UploadZoneProps) {
       return
     }
 
+    // Size is checked here as well as on the server: without it an oversized
+    // file uploads in full — minutes on a home connection — before the server
+    // rejects it.
+    const fileSizeMB = file.size / (1024 * 1024)
+    if (fileSizeMB > MAX_FILE_SIZE_MB) {
+      setUploadError(
+        `This file is ${Math.round(fileSizeMB)}MB. The limit is ${MAX_FILE_SIZE_MB}MB — ` +
+          `try splitting it, or exporting a smaller PDF.`
+      )
+      return
+    }
+
     setUploading(true)
     setUploadProgress(0)
 
@@ -325,7 +342,9 @@ export function UploadZone({ examId }: UploadZoneProps) {
             <IconUpload size={40} stroke={1.5} className="mx-auto mb-3 text-teal-400" />
             <p className="mb-1 text-[15px] text-ink">Drag PDFs or PPTX here</p>
             <p className="text-sm text-ink-muted">or browse files</p>
-            <p className="mt-2 text-xs text-ink-muted">Supported: PDF, PPTX (max 300MB)</p>
+            <p className="mt-2 text-xs text-ink-muted">
+              Supported: PDF, PPTX (max {MAX_FILE_SIZE_MB}MB)
+            </p>
           </div>
         </div>
 

@@ -5,6 +5,8 @@ import { Button } from '@/components/cadence/Button'
 
 export const dynamic = 'force-dynamic'
 
+const MAX_FILE_SIZE_MB = parseInt(process.env.MAX_FILE_SIZE_MB || '50')
+
 // Public landing page — the one route outside the middleware auth gate. Signed-in
 // visitors skip straight to their dashboard.
 export default async function Home() {
@@ -54,7 +56,7 @@ export default async function Home() {
             Prose subjects work best. Heavy mathematical notation degrades when PDFs are
             converted to text.
           </li>
-          <li>PDF and PPTX only, up to 300MB per file.</li>
+          <li>PDF and PPTX only, up to {MAX_FILE_SIZE_MB}MB per file.</li>
           <li>Generated questions can be wrong — flag them and it helps.</li>
         </ul>
       </div>
