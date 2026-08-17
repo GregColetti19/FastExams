@@ -69,8 +69,10 @@ export const config = {
     '/flashcards/:path*',
     '/review/:path*',
     '/analytics/:path*',
-    // API routes except the mock-only dev-db endpoint, which 404s on its own
-    // when DB_MODE isn't mock.
-    '/api/((?!dev-db).*)',
+    // API routes, except:
+    //  - dev-db, the mock-only endpoint that 404s on its own when DB_MODE
+    //    isn't mock
+    //  - health, the host's liveness probe, which must answer without a session
+    '/api/((?!dev-db|health).*)',
   ],
 }

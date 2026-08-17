@@ -29,8 +29,10 @@ RUN python -c "from docling.document_converter import DocumentConverter; Documen
 
 COPY main.py .
 
-# Railway injects PORT; 8001 matches the local default.
-ENV PORT=8001
+# No ENV PORT here on purpose: the host injects PORT, and baking a default into
+# the image can shadow it, leaving the container listening on a port nothing
+# routes to. The CMD below falls back to 8001 only when PORT is genuinely unset
+# (local `docker run`).
 EXPOSE 8001
 
 # One worker on purpose: conversion is CPU- and memory-heavy, and a second
