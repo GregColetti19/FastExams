@@ -114,6 +114,28 @@ export async function POST(request: NextRequest) {
       .upload(storagePath, fileBuffer, { contentType: file.type }) as any
 
     if (uploadError) {
+      // Diagnostic: an RLS denial here is almost always one of two things —
+      // the path lacks the owner prefix, or the request reached storage without
+      // the user's JWT (role 'anon' instead of 'authenticated'). Log both facts
+      // rather than inferring them from the generic 403.
+      const { data: sess } = await supabase.auth.getSession()
+      console.error(
+        '[upload] storage denied — path=%s userId=%s hasSession=%s tokenRole=%s',
+        storagePath,
+        user.id,
+        Boolean(sess?.session),
+        (() => {
+          const t = sess?.session?.access_token
+          if (!t) return 'none(anon key used)'
+          try {
+            return JSON.parse(
+              Buffer.from(t.split('.')[1] + '===', 'base64url').toString()
+            ).role
+          } catch {
+            return 'unparseable'
+          }
+        })()
+      )
       console.error('Storage upload error:', uploadError)
       // Supabase storage returns statusCode '413' when the file exceeds the
       // bucket's size limit (distinct from our own MAX_FILE_SIZE_MB check above,
