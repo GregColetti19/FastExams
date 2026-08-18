@@ -115,6 +115,21 @@ Where it can stall:
 
 ---
 
+## Build notes
+
+**`npm install`, not `npm ci`.** `npm ci` deletes `node_modules` wholesale
+before installing, and Railway mounts its build cache at
+`/app/node_modules/.cache`. That mount is busy, the rmdir fails, and the build
+dies with `EBUSY: resource busy or locked`. `npm install` updates in place and
+is still deterministic with a committed lockfile. Do not "fix" this back to
+`npm ci` — it will break the deploy again.
+
+**Node is pinned to >=22.19.0** (`.nvmrc`, `engines` in package.json).
+`undici@8` requires it, and Railway otherwise resolves 22.14.0, which trips
+`EBADENGINE`. undici is not optional: `instrumentation.ts` uses it to raise the
+fetch timeout from its 300s default to 30 minutes, which the ingestion pipeline
+needs.
+
 ## Architecture constraints
 
 **Single replica, deliberately.** `numReplicas: 1` in both `railway.json`
