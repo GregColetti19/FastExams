@@ -40,14 +40,29 @@ export function devUser(): { id: string; email: string } | null {
   }
 }
 
-// LIMITATION — the bypass supplies an application-level identity only. It does
-// NOT mint a Supabase JWT, so `auth.uid()` is NULL in the database and every
-// RLS policy evaluates false. This works today only because the dev project has
-// RLS DISABLED on its tables (migration 003) and the anon key is used directly.
+// RLS AND THE BYPASS
 //
-// If dev is ever brought in line with live (RLS on, owner-scoped policies), this
-// bypass stops working and the options are: sign in normally, or have
-// createServerClient_() use the SERVICE ROLE key when the bypass is on (service
-// role skips RLS entirely — acceptable locally, catastrophic if it ever shipped).
-// Deliberately not doing that now: it would put a service-role code path in the
-// request handler, which is exactly the kind of thing that leaks to production.
+// Dev now runs live's exact RLS policies (migration 014), so dev and live differ
+// ONLY by this flag. But the bypass mints no Supabase JWT, so auth.uid() is NULL
+// and every owner-scoped policy evaluates false — a bypassed request would read
+// nothing.
+//
+// So when the bypass is on, the server client uses the SERVICE ROLE key, which
+// skips RLS entirely. That is a deliberate, contained trade:
+//   - it is the only way to have real policies on dev AND skip sign-in;
+//   - it is gated on NODE_ENV !== 'production' (see isDevAuthBypass), so the
+//     service-role path cannot exist in a production build;
+//   - it means dev does NOT exercise the policies themselves. Policy changes
+//     must be tested with the bypass OFF (sign in normally) — parity of the
+//     RULES is what migration 014 buys; parity of ENFORCEMENT still needs a
+//     real session.
+//
+// `npm run db:parity` diffs the two projects so drift is caught mechanically.
+
+/**
+ * True when the server client should use the service-role key.
+ * Only ever true under the same conditions as isDevAuthBypass().
+ */
+export function useServiceRoleForDev(): boolean {
+  return isDevAuthBypass() && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
+}

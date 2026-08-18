@@ -268,12 +268,22 @@ multi-user or public deploy.
   in `dev-auth.ts` records the two options and why the service-role one was not
   taken.
 
-- [ ] 🟠 **Dev project still has the old storage posture.** `zwyhbjkqxwpqecpabhbs`
-  keeps RLS **disabled** on exams/files/chunks (migration 003), both buckets
-  `public=true`, and one anon-only INSERT policy. Fine for solo dev, but it means
-  dev does NOT reproduce live's authorisation behaviour — an upload bug caused by
-  RLS will pass locally and fail in production. Port 013 (plus a path re-key for
-  the 9 legacy flat keys) if dev should mirror live.
+- [x] ✅ **Dev/live parity — done 2026-08-18** (`014_dev_live_parity.sql`, applied
+  to dev). Dev previously had RLS OFF with 0 policies while live ran 11
+  owner-scoped ones; that gap is exactly why the storage 403 reached production
+  undetected. Dev now carries live's policies **verbatim** (transcribed from
+  `pg_policies` on live, not rewritten), RLS on all 10 tables, `is_admin`,
+  private buckets, and the 9 legacy flat storage keys re-keyed to `<user_id>/...`.
+  Also dropped `files.original_filename` — a column that existed only on dev,
+  created by hand outside any migration, referenced by no code.
+  **`npm run db:parity`** diffs the two projects (columns, RLS, policies, storage
+  policies, functions, buckets) and exits 1 on drift. Verified: all six checks OK.
+  The only sanctioned difference is dev's extra `images` bucket, allow-listed in
+  the script.
+  ⚠️ **The bypass now uses the SERVICE ROLE key** (no JWT → `auth.uid()` NULL →
+  policies deny). So with `DEV_AUTH_BYPASS=true` you get parity of RULES but not
+  of ENFORCEMENT — the policies exist and are identical, but are skipped. Test
+  any auth/RLS change with the bypass OFF.
 
 - [ ] 🟡 **Orphaned storage objects on dev.** 28 objects vs 9 `files` rows: the
   exam-delete cascade selected `storage_path` but never called `storage.remove()`,

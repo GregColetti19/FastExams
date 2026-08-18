@@ -3,16 +3,24 @@ import { cookies } from 'next/headers'
 import type { Database } from '@/types'
 import { isMockDb, assertRealConfig } from './mock-mode'
 import { createFileMockClient } from './mock/persist'
-import { devUser } from './dev-auth'
+import { devUser, useServiceRoleForDev } from './dev-auth'
 
 export async function createServerClient_() {
   if (isMockDb()) return createFileMockClient() as any
   assertRealConfig(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
   const cookieStore = await cookies()
 
+  // Dev-auth bypass: no JWT is minted, so auth.uid() is NULL and dev's RLS
+  // policies (now identical to live's, migration 014) would deny everything.
+  // The service-role key skips RLS. useServiceRoleForDev() is false in any
+  // production build, so this key is never selected in a deployed environment.
+  const key = useServiceRoleForDev()
+    ? process.env.SUPABASE_SERVICE_ROLE_KEY!
+    : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
   return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    key,
     {
       cookies: {
         getAll() {

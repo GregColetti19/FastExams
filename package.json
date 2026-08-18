@@ -19,7 +19,8 @@
     "dev:all": "concurrently -n next,converter -c blue,green \"next dev\" \"npm run converter\"",
     "dev:seed": "node scripts/seed-dev.mjs",
     "dev:mock": "DB_MODE=mock NEXT_PUBLIC_DB_MODE=mock DEV_DB_PERSIST=1 concurrently -n next,converter -c blue,green \"next dev\" \"npm run converter\"",
-    "start:oneclick": "./start-dev.sh"
+    "start:oneclick": "./start-dev.sh",
+    "db:parity": "node scripts/db-parity.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
