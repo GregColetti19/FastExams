@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerClient_ } from '@/lib/supabase/server'
+import { createServerClient_, getCurrentUser } from '@/lib/supabase/server'
 import { checkUploadQuota, windowStart } from '@/lib/upload-quota'
 import { FileRole } from '@/types'
 
@@ -13,9 +13,7 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerClient_()
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getCurrentUser(supabase)
 
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, { status: 401 })

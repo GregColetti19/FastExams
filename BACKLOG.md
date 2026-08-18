@@ -253,6 +253,21 @@ multi-user or public deploy.
   `POST https://api.supabase.com/v1/projects/smkuscpfrzmewsijlefb/database/query`
   with `SUPABASE_ACCESS_TOKEN`.
 
+- [x] ✅ **Dev-auth bypass added 2026-08-18** (`lib/supabase/dev-auth.ts`).
+  Local dev against the REAL dev database no longer requires sign-in; live keeps
+  full auth plus the admin layer. Enable in `.env.local`:
+  `DEV_AUTH_BYPASS=true`, `DEV_USER_ID=6a7223fc-a96d-434a-9125-98ba6e4daca3`.
+  Off unless ALL of: the flag is exactly `"true"`, `DEV_USER_ID` is set, and
+  `NODE_ENV !== 'production'` — so a production build cannot enable it even if
+  the var leaks into the deploy env. `getCurrentUser()` in `lib/supabase/server.ts`
+  is the single choke point; middleware short-circuits the gate the same way
+  `DB_MODE=mock` already did.
+  ⚠️ It supplies an APPLICATION identity only — no Supabase JWT, so `auth.uid()`
+  is NULL and every RLS policy evaluates false. Works only because dev has RLS
+  disabled. Bringing dev in line with live (below) BREAKS this bypass; the note
+  in `dev-auth.ts` records the two options and why the service-role one was not
+  taken.
+
 - [ ] 🟠 **Dev project still has the old storage posture.** `zwyhbjkqxwpqecpabhbs`
   keeps RLS **disabled** on exams/files/chunks (migration 003), both buckets
   `public=true`, and one anon-only INSERT policy. Fine for solo dev, but it means

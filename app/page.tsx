@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { createServerClient_ } from '@/lib/supabase/server'
+import { createServerClient_, getCurrentUser } from '@/lib/supabase/server'
 import { Button } from '@/components/cadence/Button'
 
 export const dynamic = 'force-dynamic'
@@ -11,9 +11,7 @@ const MAX_FILE_SIZE_MB = parseInt(process.env.MAX_FILE_SIZE_MB || '50')
 // visitors skip straight to their dashboard.
 export default async function Home() {
   const supabase = await createServerClient_()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const user = await getCurrentUser(supabase)
 
   if (user) redirect('/dashboard')
 

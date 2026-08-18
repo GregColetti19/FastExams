@@ -1,4 +1,4 @@
-import { createServerClient_ } from '@/lib/supabase/server'
+import { createServerClient_, getCurrentUser } from '@/lib/supabase/server'
 import { AnalyticsView } from '@/components/analytics/AnalyticsView'
 import type { Exam, Topic, Subtopic, Question, QuestionAttempt } from '@/types'
 
@@ -8,9 +8,7 @@ export default async function AnalyticsPage() {
   const supabase = await createServerClient_()
 
   // See DashboardPage: explicit scoping alongside RLS.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const user = await getCurrentUser(supabase)
 
   const [{ data: exams }, { data: topics }, { data: subtopics }, { data: questions }, { data: attempts }] =
     await Promise.all([

@@ -1,4 +1,4 @@
-import { createServerClient_ } from '@/lib/supabase/server'
+import { createServerClient_, getCurrentUser } from '@/lib/supabase/server'
 import { ExamCard } from '@/components/exam/ExamCard'
 import { NewExamDialog } from '@/components/exam/NewExamDialog'
 import type { Exam, Topic, Subtopic, Question } from '@/types'
@@ -10,9 +10,7 @@ export default async function DashboardPage() {
 
   // Middleware guarantees a session here; the filter is belt-and-braces next to
   // RLS so this stays scoped even if enforcement is toggled off for debugging.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const user = await getCurrentUser(supabase)
 
   const [{ data: exams, error: examsError }, { data: topics }, { data: subtopics }, { data: questions }] =
     await Promise.all([

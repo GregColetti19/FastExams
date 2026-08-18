@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isDevAuthBypass } from '@/lib/supabase/dev-auth'
 
 // Routes that require a signed-in user. Everything not matched here (auth pages,
 // static assets, /api/dev-db) is left alone by the matcher below.
@@ -7,6 +8,11 @@ export async function middleware(request: NextRequest) {
   // DB_MODE=mock has no real auth (mock client returns a canned user), so the
   // gate would redirect forever. Local mock dev stays open.
   if (process.env.DB_MODE === 'mock') return NextResponse.next()
+
+  // Dev-auth bypass: local dev against the REAL dev database, no sign-in. Gated
+  // on NODE_ENV !== 'production' inside isDevAuthBypass(), so a production build
+  // cannot enable it even if DEV_AUTH_BYPASS leaks into the deploy env.
+  if (isDevAuthBypass()) return NextResponse.next()
 
   // Internal server-to-server calls (upload → process-file, generate-exam →
   // generate-questions / recalibrate) run detached in setImmediate after the
