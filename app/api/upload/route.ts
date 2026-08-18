@@ -103,7 +103,10 @@ export async function POST(request: NextRequest) {
 
     // Upload file to Supabase Storage
     const fileBuffer = Buffer.from(await file.arrayBuffer())
-    const storagePath = `${Date.now()}-${fileName}`
+    // Owner prefix is load-bearing, not cosmetic: storage RLS (migration 014)
+    // authorises on the first path segment, so an object written without it is
+    // readable by nobody. Must stay in sync with the policy predicate.
+    const storagePath = `${user.id}/${Date.now()}-${fileName}`
 
     const { error: uploadError } = await supabase.storage
       .from('uploads')

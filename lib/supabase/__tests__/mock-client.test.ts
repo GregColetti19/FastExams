@@ -141,6 +141,22 @@ describe('mock storage + auth', () => {
     expect(down.error).toBeTruthy()
   })
 
+  // The exam-delete cascade calls storage.remove(); before this existed the
+  // mock threw and deleted exams leaked their objects in production.
+  it('removes stored objects and is idempotent on missing keys', async () => {
+    const sb = db()
+    const buf = new Uint8Array([1, 2, 3])
+    await sb.storage.from('uploads').upload('u1/file.pdf', buf)
+    expect((await sb.storage.from('uploads').download('u1/file.pdf')).data).toBeTruthy()
+
+    const rm = await sb.storage.from('uploads').remove(['u1/file.pdf'])
+    expect(rm.error).toBeNull()
+    expect((await sb.storage.from('uploads').download('u1/file.pdf')).data).toBeNull()
+
+    // Removing an already-gone key must not error.
+    expect((await sb.storage.from('uploads').remove(['u1/file.pdf'])).error).toBeNull()
+  })
+
   it('auth.getUser returns the dev user', async () => {
     const { data } = await db().auth.getUser()
     expect(data.user.id).toBe(DEV_USER.id)

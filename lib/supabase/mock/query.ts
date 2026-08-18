@@ -95,7 +95,7 @@ export function executeQuery(store: MockStore, spec: QuerySpec): Result {
 
 export interface StorageSpec {
   bucket: string
-  action: 'upload' | 'download'
+  action: 'upload' | 'download' | 'remove'
   path: string
   dataB64?: string
 }
@@ -104,6 +104,12 @@ export function executeStorage(store: MockStore, spec: StorageSpec): Result {
   const key = `${spec.bucket}/${spec.path}`
   if (spec.action === 'upload') {
     store.storage.set(key, spec.dataB64 ? b64ToBytes(spec.dataB64) : new Uint8Array())
+    store.onMutate?.()
+    return { data: { path: spec.path }, error: null }
+  }
+  if (spec.action === 'remove') {
+    // Supabase's remove() is idempotent — deleting a missing key is not an error.
+    store.storage.delete(key)
     store.onMutate?.()
     return { data: { path: spec.path }, error: null }
   }

@@ -51,6 +51,17 @@ export async function DELETE(
     const { data: files } = await sb.from('files').select('id, storage_path').eq('exam_id', examId)
     const fileIds = ids(files)
     if (fileIds.length) {
+      // Remove the stored objects too. This was previously skipped even though
+      // storage_path was already being selected, so every deleted exam leaked
+      // its uploads (28 objects for 9 rows before this was fixed). Best-effort:
+      // a storage failure must not abort the DB cascade and strand the exam.
+      const paths = (files || [])
+        .map((f: { storage_path?: string }) => f.storage_path)
+        .filter((p): p is string => Boolean(p))
+      if (paths.length) {
+        const { error: rmError } = await sb.storage.from('uploads').remove(paths)
+        if (rmError) console.error('Storage cleanup failed for exam', examId, rmError)
+      }
       await sb.from('chunks').delete().in('file_id', fileIds)
       await sb.from('files').delete().eq('exam_id', examId)
     }

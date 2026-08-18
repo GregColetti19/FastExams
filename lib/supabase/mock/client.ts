@@ -112,6 +112,13 @@ function makeStorage(exec: StorageExecutor) {
           const bytes = b64ToBytes(res.data.dataB64)
           return { data: new Blob([bytes as unknown as BlobPart]), error: null }
         },
+        // Real Supabase remove() takes an array of paths and is idempotent.
+        async remove(paths: string[]): Promise<Result> {
+          for (const path of paths) {
+            await exec({ bucket, action: 'remove', path })
+          }
+          return { data: paths.map((path) => ({ path })), error: null }
+        },
         getPublicUrl(path: string) {
           return { data: { publicUrl: `mock://${bucket}/${path}` } }
         },

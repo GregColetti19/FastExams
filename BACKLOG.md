@@ -231,6 +231,41 @@ repaired so `supabase migration list` reflects reality.
 matches mock-DB dev behavior). Fine for solo dev/testing; revisit before any
 multi-user or public deploy.
 
+- [x] ✅ **Storage RLS blocked ALL uploads on the LIVE project — fixed 2026-08-18**
+  (`013_storage_owner_policies.sql`, applied to `smkuscpfrzmewsijlefb`).
+  Symptom: every upload 403'd with `new row violates row-level security policy`.
+  Cause: `storage.objects` had RLS **enabled with ZERO policies**, so no insert
+  could ever be authorised. The bucket was created in the dashboard; its policies
+  never were. No upload had ever succeeded (bucket was empty).
+  Fix: owner-scoped policies keyed on `(storage.foldername(name))[1] = auth.uid()`,
+  with an `is_admin()` override; `upload/route.ts` now writes `<user_id>/<ts>-<name>`.
+  Verified live: 4 policies present, predicate accepts own path / rejects foreign.
+
+  ⚠️ **TWO PROJECTS — do not confuse them.** `.env.local` →
+  `zwyhbjkqxwpqecpabhbs` (dev). `.env.alphaTest` → `smkuscpfrzmewsijlefb` (LIVE,
+  what Railway runs). They are in different states: dev has RLS **off** on tables
+  (migration 003) with public buckets; live has RLS **on** with 11 owner-scoped
+  table policies and a private bucket. Migrations 010-012 are applied to BOTH;
+  013 is applied to LIVE ONLY (dev's storage layout differs — it has an extra
+  `images` bucket, public=true, and legacy flat keys that would need re-keying).
+  The Supabase CLI is linked to **dev**, so `supabase db push` targets the wrong
+  project. Live has no DB password in env — reach it via the Management API:
+  `POST https://api.supabase.com/v1/projects/smkuscpfrzmewsijlefb/database/query`
+  with `SUPABASE_ACCESS_TOKEN`.
+
+- [ ] 🟠 **Dev project still has the old storage posture.** `zwyhbjkqxwpqecpabhbs`
+  keeps RLS **disabled** on exams/files/chunks (migration 003), both buckets
+  `public=true`, and one anon-only INSERT policy. Fine for solo dev, but it means
+  dev does NOT reproduce live's authorisation behaviour — an upload bug caused by
+  RLS will pass locally and fail in production. Port 013 (plus a path re-key for
+  the 9 legacy flat keys) if dev should mirror live.
+
+- [ ] 🟡 **Orphaned storage objects on dev.** 28 objects vs 9 `files` rows: the
+  exam-delete cascade selected `storage_path` but never called `storage.remove()`,
+  so every deleted exam leaked its uploads. The delete route now removes them
+  (best-effort, so a storage failure can't strand the DB cascade), but the 19
+  pre-existing orphans are still there. Cleanup is destructive — do it deliberately.
+
 ## UX / frontend (added 2026-07-14)
 
 - [x] 🟠 **Research + design an "activating" frontend.** Current UI is
