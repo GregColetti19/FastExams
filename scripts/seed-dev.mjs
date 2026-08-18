@@ -55,6 +55,36 @@ function mcq(subtopicId, qtext, options, justification, due = false) {
   return { question, opts }
 }
 
+function flashcard(subtopicId, front, back, due = false) {
+  const id = randomUUID()
+  const question = {
+    id,
+    subtopic_id: subtopicId,
+    chunk_id: null,
+    question_text: front,
+    image_storage_path: null,
+    justification: back,
+    language: 'en',
+    question_type: 'flashcard',
+    source: 'ai_generated',
+    past_exam_year: null,
+    matched_chunk_id: null,
+    times_seen: 0,
+    times_correct: 0,
+    current_interval_days: 1,
+    last_seen_at: null,
+    next_review_at: due ? '2020-01-01T00:00:00.000Z' : now(),
+    stability: 0,
+    difficulty: 0,
+    reps: 0,
+    lapses: 0,
+    fsrs_state: 0,
+    learning_steps: 0,
+    created_at: now(),
+  }
+  return { question, opts: [] }
+}
+
 const built = [
   mcq(
     sub1,
@@ -91,6 +121,18 @@ const built = [
     ],
     'A typical normal resting systolic pressure is around 120 mmHg (120/80).'
   ),
+  flashcard(
+    sub1,
+    'What produces the "lub" (S1) heart sound?',
+    'Closure of the AV valves (mitral + tricuspid) at the start of ventricular systole.',
+    true
+  ),
+  flashcard(
+    sub2,
+    'Define "normal" resting blood pressure (adult).',
+    'Roughly 120/80 mmHg — 120 systolic, 80 diastolic.',
+    true
+  ),
 ]
 
 const data = {
@@ -125,4 +167,6 @@ const data = {
 mkdirSync(dirname(DB_PATH), { recursive: true })
 writeFileSync(DB_PATH, JSON.stringify(data, null, 2))
 console.log(`Seeded ${DB_PATH}`)
-console.log(`  1 exam, 1 topic, 2 subtopics, ${data.tables.questions.length} questions (2 due for review)`)
+const dueMcq = data.tables.questions.filter((q) => q.question_type === 'mcq' && q.next_review_at < now()).length
+const dueCards = data.tables.questions.filter((q) => q.question_type === 'flashcard' && q.next_review_at < now()).length
+console.log(`  1 exam, 1 topic, 2 subtopics, ${data.tables.questions.length} questions (${dueMcq} quiz due, ${dueCards} flashcard due)`)

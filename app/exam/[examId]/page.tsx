@@ -4,6 +4,7 @@ import { createServerClient_ } from '@/lib/supabase/server'
 import { TopicGrid } from '@/components/exam/TopicGrid'
 import { BackButton } from '@/components/shared/BackButton'
 import { ActiveToggle } from '@/components/exam/ActiveToggle'
+import { DeleteExamButton } from '@/components/exam/DeleteExamButton'
 import { IconChip, button } from '@/components/cadence'
 import { seedAccent } from '@/lib/icons/registry'
 import type { Question } from '@/types'
@@ -89,6 +90,7 @@ export default async function ExamPage({ params }: { params: { examId: string } 
           <Link href={`/exam/${exam.id}/upload`} className={button({ variant: 'primary' })}>
             + Upload files
           </Link>
+          <DeleteExamButton examId={exam.id} examName={exam.name} redirectTo="/dashboard" />
         </div>
       </div>
 

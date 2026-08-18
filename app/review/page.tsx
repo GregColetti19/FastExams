@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { IconFlame, IconChevronRight } from "@tabler/icons-react";
+import { IconFlame, IconChevronRight, IconCards, IconListCheck } from "@tabler/icons-react";
 import { createServerClient_ } from "@/lib/supabase/server";
 import { seedAccent } from "@/lib/icons/registry";
 import {
@@ -7,17 +7,25 @@ import {
   buildHorizon,
   dueTodayCount,
   minutesToGo,
+  type ReviewMode,
 } from "@/lib/review/queue";
 import { MasteryBar, Pill } from "@/components/cadence";
 import { ReviewHorizon } from "@/components/cadence/ReviewHorizon";
 import { masteryLabel } from "@/lib/mastery";
+import { cn } from "@/lib/utils";
 import type { Exam, Topic, Subtopic, Question } from "@/types";
 
 export const dynamic = "force-dynamic";
 
 const HORIZON_DAYS = 10;
 
-export default async function ReviewPage() {
+export default async function ReviewPage({
+  searchParams,
+}: {
+  searchParams?: { mode?: string };
+}) {
+  const mode: ReviewMode = searchParams?.mode === "quiz" ? "quiz" : "flashcard";
+  const runtimePath = mode === "quiz" ? "/quiz" : "/flashcards";
   const supabase = await createServerClient_();
 
   // Flat fetches (mock DB has no nested relational selects); joined in queue.ts.
@@ -34,15 +42,15 @@ export default async function ReviewPage() {
   const S = (subtopics ?? []) as Subtopic[];
   const Q = (questions ?? []) as Question[];
 
-  const groups = buildReviewGroups(E, T, S, Q, seedAccent);
-  const horizon = buildHorizon(E, T, S, Q, HORIZON_DAYS);
+  const groups = buildReviewGroups(E, T, S, Q, seedAccent, mode);
+  const horizon = buildHorizon(E, T, S, Q, HORIZON_DAYS, mode);
   const due = dueTodayCount(groups);
   const mins = minutesToGo(due);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
       {/* Header */}
-      <div className="mb-6 flex items-start justify-between">
+      <div className="mb-4 flex items-start justify-between">
         <div>
           <h1 className="font-display text-[22px] tracking-[-0.01em] text-ink">Review</h1>
           <p className="text-sm text-ink-muted">Your spaced-repetition queue for today</p>
@@ -50,6 +58,14 @@ export default async function ReviewPage() {
         <span className="inline-flex items-center gap-1.5 rounded-pill bg-coral/15 px-2.5 py-1 text-xs text-coral-soft">
           <IconFlame size={14} stroke={1.75} /> on a roll
         </span>
+      </div>
+
+      {/* Study mode toggle — segmented control. Default flashcard (self-rated,
+          studying); quiz pulls verified MCQ/etc questions instead. Two
+          separate question populations, not two views of the same one. */}
+      <div className="mb-6 inline-flex rounded-control border border-border-hair p-1">
+        <ModeLink mode="flashcard" active={mode === "flashcard"} label="Flashcard mode" icon={IconCards} />
+        <ModeLink mode="quiz" active={mode === "quiz"} label="Quiz mode" icon={IconListCheck} />
       </div>
 
       {due === 0 ? (
@@ -68,7 +84,7 @@ export default async function ReviewPage() {
               <div className="h-full rounded-pill bg-coral" style={{ width: "8%" }} />
             </div>
             <Link
-              href={`/quiz/${groups[0].subtopicId}?due=1`}
+              href={`${runtimePath}/${groups[0].subtopicId}?due=1`}
               className="mt-4 inline-flex h-11 items-center justify-center rounded-control bg-coral px-6 font-display text-white transition-colors duration-tempo hover:bg-coral-deep"
             >
               Continue review
@@ -91,7 +107,7 @@ export default async function ReviewPage() {
               return (
                 <Link
                   key={g.subtopicId}
-                  href={`/quiz/${g.subtopicId}?due=1`}
+                  href={`${runtimePath}/${g.subtopicId}?due=1`}
                   className="flex items-center gap-3 rounded-card border border-border-hair bg-surface p-4 transition-all duration-150 motion-safe:hover:-translate-y-px hover:border-border-strong"
                 >
                   <span
@@ -117,6 +133,35 @@ export default async function ReviewPage() {
         </>
       )}
     </div>
+  );
+}
+
+function ModeLink({
+  mode,
+  active,
+  label,
+  icon: Icon,
+}: {
+  mode: ReviewMode;
+  active: boolean;
+  label: string;
+  icon: typeof IconCards;
+}) {
+  return (
+    <Link
+      href={mode === "flashcard" ? "/review" : "/review?mode=quiz"}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-control px-3 py-1.5 text-sm transition-colors duration-150",
+        active
+          ? mode === "quiz"
+            ? "bg-coral/15 text-coral-soft"
+            : "bg-teal-800/20 text-teal-100"
+          : "text-ink-muted hover:text-ink-secondary"
+      )}
+    >
+      <Icon size={14} stroke={1.75} />
+      {label}
+    </Link>
   );
 }
 

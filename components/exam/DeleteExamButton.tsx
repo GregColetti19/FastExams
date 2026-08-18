@@ -4,7 +4,15 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Trash2 } from 'lucide-react'
 
-export function DeleteExamButton({ examId, examName }: { examId: string; examName: string }) {
+export function DeleteExamButton({
+  examId,
+  examName,
+  redirectTo,
+}: {
+  examId: string
+  examName: string
+  redirectTo?: string
+}) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -17,7 +25,11 @@ export function DeleteExamButton({ examId, examName }: { examId: string; examNam
       const res = await fetch(`/api/exam/${examId}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Delete failed')
       setOpen(false)
-      router.refresh()
+      if (redirectTo) {
+        router.push(redirectTo)
+      } else {
+        router.refresh()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete')
     } finally {

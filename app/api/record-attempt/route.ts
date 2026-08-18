@@ -1,18 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient_ } from '@/lib/supabase/server'
-import { review, binaryGrade, State, type StoredCard } from '@/lib/fsrs'
+import { review, binaryGrade, Rating, State, type StoredCard, type Grade } from '@/lib/fsrs'
 import { masteryFromCard } from '@/lib/mastery'
+
+const VALID_GRADES: Grade[] = [Rating.Again, Rating.Hard, Rating.Good, Rating.Easy]
 
 export async function POST(request: NextRequest) {
   try {
-    const { sessionId, questionId, selectedOptionId, isCorrect, timeSpentSeconds } = await request.json()
+    const { sessionId, questionId, selectedOptionId, isCorrect, grade: rawGrade, timeSpentSeconds } = await request.json()
 
-    if (!questionId || isCorrect === undefined) {
+    if (!questionId || (isCorrect === undefined && rawGrade === undefined)) {
       return NextResponse.json(
         { error: 'Missing required fields', code: 'MISSING_FIELDS' },
         { status: 400 }
       )
     }
+
+    // Quiz path sends isCorrect (binary, verified). Flashcard path sends an
+    // explicit FSRS grade (self-rated Again/Hard/Good/Easy) — richer signal,
+    // isolated here so callers don't need to know FSRS's grade encoding.
+    const grade: Grade = VALID_GRADES.includes(rawGrade) ? rawGrade : binaryGrade(!!isCorrect)
+    // is_correct persisted on the attempt row is derived from the grade when
+    // the caller only sent a grade (Again = incorrect, everything else = correct).
+    const attemptCorrect = rawGrade !== undefined ? grade !== Rating.Again : !!isCorrect
 
     const supabase = await createServerClient_()
 
@@ -27,7 +37,7 @@ export async function POST(request: NextRequest) {
             session_id: sessionId,
             question_id: questionId,
             selected_option_id: selectedOptionId || null,
-            is_correct: isCorrect,
+            is_correct: attemptCorrect,
             time_spent_seconds: timeSpentSeconds || null,
           },
         ])
@@ -60,7 +70,6 @@ export async function POST(request: NextRequest) {
       learning_steps: question.learning_steps ?? 0,
       last_review: question.last_seen_at ? new Date(question.last_seen_at) : null,
     }
-    const grade = binaryGrade(isCorrect)
     const nextCard = review(priorCard, grade)
 
     // Update question scheduling (both FSRS state and the legacy SM-2 counters,
@@ -69,7 +78,7 @@ export async function POST(request: NextRequest) {
     await (supabase.from('questions') as any)
       .update({
         times_seen: question.times_seen + 1,
-        times_correct: isCorrect ? question.times_correct + 1 : question.times_correct,
+        times_correct: attemptCorrect ? question.times_correct + 1 : question.times_correct,
         last_seen_at: new Date().toISOString(),
         next_review_at: nextCard.due.toISOString(),
         stability: nextCard.stability,
@@ -90,7 +99,7 @@ export async function POST(request: NextRequest) {
         .single() as any
 
       if (session) {
-        const newCorrectCount = isCorrect ? session.correct_count + 1 : session.correct_count
+        const newCorrectCount = attemptCorrect ? session.correct_count + 1 : session.correct_count
         const newTotalCount = session.total_questions + 1
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (supabase.from('study_sessions') as any)

@@ -1,16 +1,16 @@
 'use client'
 
 import { useState } from 'react'
-import { Button } from '@/components/cadence/Button'
+import { RatingControl } from '@/components/cadence/RatingControl'
+import type { Grade } from '@/lib/fsrs'
 
 interface FlashCardProps {
   front: string
   back: string
-  onGotIt: () => void
-  onMissedIt: () => void
+  onRate: (grade: Grade) => void
 }
 
-export function FlashCard({ front, back, onGotIt, onMissedIt }: FlashCardProps) {
+export function FlashCard({ front, back, onRate }: FlashCardProps) {
   const [flipped, setFlipped] = useState(false)
 
   return (
@@ -53,22 +53,8 @@ export function FlashCard({ front, back, onGotIt, onMissedIt }: FlashCardProps) 
         </div>
       </div>
 
-      {/* Rating — binary default (§8.5): Again / Got it */}
-      {flipped && (
-        <div className="flex gap-3">
-          <Button
-            variant="ghost"
-            size="lg"
-            className="flex-1 border-coral/50 text-coral-soft hover:border-coral"
-            onClick={onMissedIt}
-          >
-            Again
-          </Button>
-          <Button variant="confirm" size="lg" className="flex-1" onClick={onGotIt}>
-            Got it
-          </Button>
-        </div>
-      )}
+      {/* Rating — FSRS's own 4-grade scale */}
+      {flipped && <RatingControl onGrade={onRate} />}
     </div>
   )
 }

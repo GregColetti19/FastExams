@@ -38,21 +38,46 @@ describe("buildReviewGroups — Active filter (the load-bearing rule)", () => {
   ];
 
   it("excludes questions from inactive exams", () => {
-    const groups = buildReviewGroups(exams, topics, subs, questions, accent, now);
+    const groups = buildReviewGroups(exams, topics, subs, questions, accent, "quiz", now);
     expect(groups).toHaveLength(1);
     expect(groups[0].examName).toBe("Exam active");
     expect(dueTodayCount(groups)).toBe(1);
   });
 
-  it("excludes not-yet-due, flashcards, and unanswerable questions", () => {
+  it("excludes not-yet-due and unanswerable questions, and non-matching-mode questions", () => {
     const qs = [
       q("due", "s1", dayAgo),
       q("future", "s1", inThreeDays),
       q("card", "s1", dayAgo, { question_type: "flashcard" }),
       q("unans", "s1", dayAgo, { answer_status: "unanswerable" }),
     ];
-    const groups = buildReviewGroups(exams, topics, subs, qs, accent, now);
-    expect(dueTodayCount(groups)).toBe(1);
+    const groups = buildReviewGroups(exams, topics, subs, qs, accent, "quiz", now);
+    expect(dueTodayCount(groups)).toBe(1); // only "due" (mcq, due, answerable)
+  });
+});
+
+describe("buildReviewGroups — mode filter", () => {
+  const exams = [exam("a", true)];
+  const topics = [topic("t1", "a")];
+  const subs = [sub("s1", "t1")];
+  const qs = [
+    q("quiz1", "s1", dayAgo, { question_type: "mcq" }),
+    q("card1", "s1", dayAgo, { question_type: "flashcard" }),
+  ];
+
+  it("defaults to flashcard mode", () => {
+    const groups = buildReviewGroups(exams, topics, subs, qs, accent);
+    expect(dueTodayCount(groups)).toBe(1); // only card1
+  });
+
+  it("quiz mode pulls only non-flashcard questions", () => {
+    const groups = buildReviewGroups(exams, topics, subs, qs, accent, "quiz");
+    expect(dueTodayCount(groups)).toBe(1); // only quiz1
+  });
+
+  it("flashcard mode pulls only flashcard questions", () => {
+    const groups = buildReviewGroups(exams, topics, subs, qs, accent, "flashcard");
+    expect(dueTodayCount(groups)).toBe(1); // only card1
   });
 });
 
@@ -66,10 +91,24 @@ describe("buildHorizon", () => {
       q("d3", "s1", inThreeDays),      // offset 3
       q("paused", "s2", inThreeDays),  // excluded
     ];
-    const h = buildHorizon(exams, topics, subs, qs, 10, now);
+    const h = buildHorizon(exams, topics, subs, qs, 10, "quiz", now);
     expect(h[0].count).toBe(1);
     expect(h[3].count).toBe(1);
     expect(h.reduce((n, d) => n + d.count, 0)).toBe(2); // paused dropped
+  });
+
+  it("respects the mode filter same as buildReviewGroups", () => {
+    const exams = [exam("a", true)];
+    const topics = [topic("t1", "a")];
+    const subs = [sub("s1", "t1")];
+    const qs = [
+      q("quiz1", "s1", dayAgo, { question_type: "mcq" }),
+      q("card1", "s1", dayAgo, { question_type: "flashcard" }),
+    ];
+    const quizHorizon = buildHorizon(exams, topics, subs, qs, 10, "quiz", now);
+    expect(quizHorizon.reduce((n, d) => n + d.count, 0)).toBe(1);
+    const cardHorizon = buildHorizon(exams, topics, subs, qs, 10, "flashcard", now);
+    expect(cardHorizon.reduce((n, d) => n + d.count, 0)).toBe(1);
   });
 });
 

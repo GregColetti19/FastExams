@@ -26,8 +26,19 @@ export interface HorizonDay {
   count: number;
 }
 
-function isQuizzable(q: Question): boolean {
-  return q.question_type !== "flashcard" && q.answer_status !== "unanswerable";
+export type ReviewMode = "flashcard" | "quiz";
+
+/**
+ * Which questions feed today's queue depends on the study mode (§ mode
+ * differentiation). Flashcard mode (default) pulls flashcard-type questions;
+ * quiz mode pulls everything else (mcq/true_false/fill_blank). A question is
+ * either quiz-shaped or flashcard-shaped in the DB — no pairing — so this is
+ * a straight type filter, not a per-question view switch.
+ */
+function matchesMode(q: Question, mode: ReviewMode): boolean {
+  const isFlashcard = q.question_type === "flashcard";
+  if (mode === "flashcard" ? !isFlashcard : isFlashcard) return false;
+  return q.answer_status !== "unanswerable";
 }
 
 function daysBetween(from: Date, to: Date): number {
@@ -52,6 +63,7 @@ export function buildReviewGroups(
   subtopics: Subtopic[],
   questions: Question[],
   accentFor: (examId: string) => string,
+  mode: ReviewMode = "flashcard",
   now: Date = new Date()
 ): ReviewGroup[] {
   // active unless explicitly paused (legacy rows predating the `active` column read as active)
@@ -63,7 +75,7 @@ export function buildReviewGroups(
   const groups = new Map<string, { sub: Subtopic; exam: Exam; due: Question[] }>();
 
   for (const q of questions) {
-    if (!isQuizzable(q)) continue;
+    if (!matchesMode(q, mode)) continue;
     if (new Date(q.next_review_at) > now) continue; // not due yet
     const sub = subById.get(q.subtopic_id);
     if (!sub) continue;
@@ -111,6 +123,7 @@ export function buildHorizon(
   subtopics: Subtopic[],
   questions: Question[],
   days: number,
+  mode: ReviewMode = "flashcard",
   now: Date = new Date()
 ): HorizonDay[] {
   const activeExamIds = new Set(exams.filter((e) => e.active !== false).map((e) => e.id));
@@ -124,7 +137,7 @@ export function buildHorizon(
 
   const buckets = new Array(days).fill(0);
   for (const q of questions) {
-    if (!isQuizzable(q)) continue;
+    if (!matchesMode(q, mode)) continue;
     const examId = examOfSub(q.subtopic_id);
     if (!examId || !activeExamIds.has(examId)) continue;
     const offset = Math.max(0, daysBetween(new Date(now), new Date(q.next_review_at)));

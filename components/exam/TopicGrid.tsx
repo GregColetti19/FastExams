@@ -53,12 +53,28 @@ function SubtopicCard({ subtopic, dueIn }: { subtopic: Subtopic; dueIn: number |
         {label && <span className="text-[11px] text-ink-muted">{label}</span>}
       </div>
 
-      {/* Two launchers — the exception to "no buttons" (§8.3) */}
+      {/* Two launchers — the exception to "no buttons" (§8.3). Coral/teal
+          matches the Review mode toggle so the identity is consistent
+          wherever a student picks quiz vs flashcard. */}
       <div className="mt-4 flex gap-2">
-        <Link href={`/quiz/${subtopic.id}`} className={button({ variant: 'ghost', size: 'sm', className: 'flex-1' })}>
+        <Link
+          href={`/quiz/${subtopic.id}`}
+          className={button({
+            variant: 'ghost',
+            size: 'sm',
+            className: 'flex-1 border-coral/40 text-coral-soft hover:border-coral',
+          })}
+        >
           Quiz
         </Link>
-        <Link href={`/flashcards/${subtopic.id}`} className={button({ variant: 'ghost', size: 'sm', className: 'flex-1' })}>
+        <Link
+          href={`/flashcards/${subtopic.id}`}
+          className={button({
+            variant: 'ghost',
+            size: 'sm',
+            className: 'flex-1 border-teal-700/40 text-teal-200 hover:border-teal-600',
+          })}
+        >
           Cards
         </Link>
       </div>
