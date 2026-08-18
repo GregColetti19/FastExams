@@ -13,12 +13,18 @@ export function Navbar() {
   const [dueCount, setDueCount] = useState(0)
   const router = useRouter()
   const pathname = usePathname()
-  const supabase = createClient()
   const theme = useTheme()
   const toggleTheme = useThemeToggle()
 
+  // The Supabase client is created inside the effect and inside the handler
+  // below, never in the component body: this is a client component, but its
+  // body still executes during server-side prerender, where the Supabase env
+  // vars are absent and createClient() throws. That broke the static
+  // /_not-found page — which renders this navbar via the root layout — at build
+  // time on a clean checkout.
   useEffect(() => {
     const checkUser = async () => {
+      const supabase = createClient()
       const {
         data: { user },
       } = await supabase.auth.getUser()
@@ -39,10 +45,10 @@ export function Navbar() {
     }
 
     checkUser()
-  }, [supabase])
+  }, [])
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut()
+    await createClient().auth.signOut()
     router.push('/login')
   }
 

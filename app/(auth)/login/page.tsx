@@ -2,6 +2,11 @@ import { redirect } from 'next/navigation'
 import { createServerClient_ } from '@/lib/supabase/server'
 import { LoginForm } from '@/components/auth/LoginForm'
 
+// Reads the session to bounce signed-in visitors, so it can never be static.
+// Without this Next prerenders it at build time, where no Supabase env vars
+// exist and createServerClient_() throws — failing the build on a clean clone.
+export const dynamic = 'force-dynamic'
+
 export default async function LoginPage() {
   const supabase = await createServerClient_()
   const {

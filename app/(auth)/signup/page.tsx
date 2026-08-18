@@ -2,6 +2,9 @@ import { redirect } from 'next/navigation'
 import { createServerClient_ } from '@/lib/supabase/server'
 import { SignupForm } from '@/components/auth/SignupForm'
 
+// See login/page.tsx — session-reading, so never static.
+export const dynamic = 'force-dynamic'
+
 export default async function SignupPage() {
   const supabase = await createServerClient_()
   const {
