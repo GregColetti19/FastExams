@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/cadence/Button'
 
@@ -18,6 +19,7 @@ export function SignupForm() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
+  const router = useRouter()
   const supabase = createClient()
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -32,13 +34,32 @@ export function SignupForm() {
     }
 
     try {
-      const { error: authError } = await supabase.auth.signUp({
+      const { data, error: authError } = await supabase.auth.signUp({
         email,
         password,
       })
 
       if (authError) {
-        setError(authError.message)
+        // Supabase's raw auth messages describe its own internals, not what the
+        // person should do next. Translate the two that testers actually hit.
+        const raw = authError.message.toLowerCase()
+        if (raw.includes('rate limit')) {
+          setError('Too many sign-up attempts. Please wait a few minutes and try again.')
+        } else if (raw.includes('invalid') && raw.includes('email')) {
+          setError('That email address was rejected. Please use a different one.')
+        } else {
+          setError(authError.message)
+        }
+        return
+      }
+
+      // Branch on what came back rather than on a dashboard setting we cannot
+      // see: Supabase returns a session when email confirmation is off, and
+      // none when it is on. Showing "check your email" to an already-signed-in
+      // user strands them on a screen waiting for mail that never arrives.
+      if (data.session) {
+        router.push('/dashboard')
+        router.refresh()
         return
       }
 
