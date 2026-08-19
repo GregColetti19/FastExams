@@ -185,22 +185,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'File record creation failed', code: 'DB_ERROR' }, { status: 500 })
     }
 
-    // Kick off async processing (fire-and-forget for MVP)
-    // In production, this would be a proper background queue
-    setImmediate(async () => {
-      try {
-        await fetch(`${internalBaseUrl()}/api/process-file`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '',
-          },
-          body: JSON.stringify({ fileId: newFile.id, fileRole }),
-        })
-      } catch (error) {
-        console.error('Failed to trigger processing:', error)
-      }
-    })
+    // Trigger processing before responding, NOT in setImmediate. Work scheduled
+    // after the response is not guaranteed to run: the runtime may tear the
+    // invocation down once the response is sent, dropping the callback silently.
+    // The file then sits at 'processing' forever with no error anywhere — the
+    // converter never receives a request, because nothing ever failed.
+    //
+    // process-file returns as soon as conversion finishes and the client polls
+    // status afterwards, so awaiting here costs the upload response nothing that
+    // the user was not already waiting on.
+    try {
+      const res = await fetch(`${internalBaseUrl()}/api/process-file`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '',
+        },
+        body: JSON.stringify({ fileId: newFile.id, fileRole }),
+      })
+      if (!res.ok) throw new Error(`process-file returned ${res.status}`)
+    } catch (error) {
+      // Record the failure on the row: the upload itself succeeded, so the
+      // response stays 201, but the file must not be left claiming 'processing'.
+      const message = error instanceof Error ? error.message : String(error)
+      console.error('Failed to trigger processing:', error)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase.from('files') as any)
+        .update({ processing_status: 'error', processing_error: `Could not start processing: ${message}` })
+        .eq('id', newFile.id)
+    }
 
     return NextResponse.json(
       {
