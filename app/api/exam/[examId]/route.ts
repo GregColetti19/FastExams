@@ -57,7 +57,7 @@ export async function DELETE(
       // a storage failure must not abort the DB cascade and strand the exam.
       const paths = (files || [])
         .map((f: { storage_path?: string }) => f.storage_path)
-        .filter((p): p is string => Boolean(p))
+        .filter((p: string | undefined): p is string => Boolean(p))
       if (paths.length) {
         const { error: rmError } = await sb.storage.from('uploads').remove(paths)
         if (rmError) console.error('Storage cleanup failed for exam', examId, rmError)
