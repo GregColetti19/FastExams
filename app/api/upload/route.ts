@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient_ } from '@/lib/supabase/server'
+import { internalBaseUrl } from '@/lib/internal-url'
 import { checkUploadQuota, windowStart } from '@/lib/upload-quota'
 import { FileRole } from '@/types'
 
@@ -188,7 +189,7 @@ export async function POST(request: NextRequest) {
     // In production, this would be a proper background queue
     setImmediate(async () => {
       try {
-        await fetch(`${request.nextUrl.origin}/api/process-file`, {
+        await fetch(`${internalBaseUrl()}/api/process-file`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

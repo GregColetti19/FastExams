@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient_ } from '@/lib/supabase/server'
+import { internalBaseUrl } from '@/lib/internal-url'
 
 // Exam-level question generation. Triggered by the user once ALL files are
 // uploaded + converted ('ready'). Runs THEORY files first, then PAST_EXAM files,
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest) {
       ...ready.filter((f: any) => f.file_role === 'past_exam'),
     ]
 
-    const base = request.nextUrl.origin
+    const base = internalBaseUrl()
 
     // Mark every selected file 'generating_questions' ONCE, up front, while this
     // route is the only writer. After this point generate-exam performs NO
