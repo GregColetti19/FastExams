@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient_ } from '@/lib/supabase/server'
-import { internalBaseUrl } from '@/lib/internal-url'
+import { processFileById } from '@/lib/processing/process-file'
 import { checkUploadQuota, windowStart } from '@/lib/upload-quota'
 import { FileRole } from '@/types'
 
@@ -195,15 +195,8 @@ export async function POST(request: NextRequest) {
     // status afterwards, so awaiting here costs the upload response nothing that
     // the user was not already waiting on.
     try {
-      const res = await fetch(`${internalBaseUrl()}/api/process-file`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '',
-        },
-        body: JSON.stringify({ fileId: newFile.id, fileRole }),
-      })
-      if (!res.ok) throw new Error(`process-file returned ${res.status}`)
+      const result = await processFileById(newFile.id)
+      if (!result.ok) throw new Error(result.error)
     } catch (error) {
       // Record the failure on the row: the upload itself succeeded, so the
       // response stays 201, but the file must not be left claiming 'processing'.
