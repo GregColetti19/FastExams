@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient_ } from '@/lib/supabase/server'
-import { internalBaseUrl } from '@/lib/internal-url'
+import { runGenerateQuestions } from '@/lib/ai/generate-questions-run'
+import { runRecalibrate } from '@/lib/ai/recalibrate-run'
 
 // Exam-level question generation. Triggered by the user once ALL files are
 // uploaded + converted ('ready'). Runs THEORY files first, then PAST_EXAM files,
@@ -50,7 +51,6 @@ export async function POST(request: NextRequest) {
       ...ready.filter((f: any) => f.file_role === 'past_exam'),
     ]
 
-    const base = internalBaseUrl()
 
     // Mark every selected file 'generating_questions' ONCE, up front, while this
     // route is the only writer. After this point generate-exam performs NO
@@ -75,15 +75,15 @@ export async function POST(request: NextRequest) {
     setImmediate(async () => {
       for (const f of ordered) {
         try {
-          const res = await fetch(`${base}/api/generate-questions`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '',
-            },
-            body: JSON.stringify({ fileId: f.id, fileRole: f.file_role }),
-            signal: AbortSignal.timeout(20 * 60 * 1000), // 20 min per file
-          })
+          // In-process, not a self-fetch: fetching our own /api endpoint 404s
+          // (the call resolves in the page-render context, not the route one).
+          const res = await runGenerateQuestions(
+            new Request('http://internal/api/generate-questions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fileId: f.id, fileRole: f.file_role }),
+            })
+          )
           if (!res.ok) throw new Error(`generate-questions returned ${res.status}`)
         } catch (error) {
           console.error(`generate-exam: failed for file ${f.id}:`, error)
@@ -108,15 +108,13 @@ export async function POST(request: NextRequest) {
       // that were previously unanswerable against the expanded chunk pool.
       if (recalibrate) {
         try {
-          const res = await fetch(`${base}/api/recalibrate`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '',
-            },
-            body: JSON.stringify({ examId }),
-            signal: AbortSignal.timeout(20 * 60 * 1000),
-          })
+          const res = await runRecalibrate(
+            new Request('http://internal/api/recalibrate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ examId }),
+            })
+          )
           const result = await res.json().catch(() => ({}))
           console.log(`generate-exam: recalibrate done`, result)
         } catch (e) {

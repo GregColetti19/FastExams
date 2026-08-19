@@ -1,0 +1,708 @@
+import { NextResponse } from 'next/server'
+import { createServerClient_ } from '@/lib/supabase/server'
+import { extractTopicHierarchy, tiebreakSubtopic } from '@/lib/ai/extract-topics'
+import { assignChunksToSubtopics } from '@/lib/ai/assign-subtopics'
+import { generateQuestionsFromChunks, shuffleOptions, equalizeOptionLengths } from '@/lib/ai/generate-questions'
+import { extractPastExamQuestions } from '@/lib/ai/extract-past-exam-questions'
+import { findBestChunkByEmbedding, matchChunkForQuestion } from '@/lib/ai/match-to-theory'
+import { embedTexts, isEmbedMockEnabled } from '@/lib/ai/embeddings'
+import { answerExamQuestion } from '@/lib/ai/answer-exam-question'
+import { generateFlashcardsFromChunks } from '@/lib/ai/generate-flashcards'
+import { getRetrievalConfig, scoreStats } from '@/lib/ai/retrieval-config'
+import { decideGrounding, relativeGatesEnabled } from '@/lib/ai/grounding-gate'
+
+// Below this AI confidence, flag the question as unanswerable rather than assert.
+// (Not a retrieval threshold — this gates the ANSWER step, not grounding.)
+const ANSWER_MIN_CONFIDENCE = 0.4
+
+/** Leading option letter, e.g. "B. Mitral valve" -> "B". */
+function optionLetter(optionText: string): string {
+  const m = optionText.match(/^\s*([A-Za-z])/)
+  return m ? m[1].toUpperCase() : ''
+}
+
+/** Evenly spaced sample across an array so the tree sees the whole document. */
+function stratifiedSample<T>(items: T[], n: number): T[] {
+  if (items.length <= n) return items
+  const step = items.length / n
+  const out: T[] = []
+  for (let i = 0; i < n; i++) out.push(items[Math.floor(i * step)])
+  return out
+}
+
+/**
+ * Ensure a fallback subtopic exists to hold past-exam questions that don't
+ * match any theory (questions.subtopic_id is NOT NULL). Returns its id.
+ */
+async function ensureUnsortedSubtopic(supabase: any, examId: string): Promise<string | null> {
+  const { data: topicRows } = await (supabase.from('topics') as any)
+    .insert([{ exam_id: examId, name: 'Past Exam (unsorted)' }])
+    .select()
+  const topicId = topicRows?.[0]?.id
+  if (!topicId) return null
+  const { data: subRows } = await (supabase.from('subtopics') as any)
+    .insert([{ topic_id: topicId, name: 'Unsorted' }])
+    .select()
+  return subRows?.[0]?.id ?? null
+}
+
+/**
+ * The generate-questions pipeline.
+ *
+ * Lives here, not only in the route, so generate-exam can run it in-process.
+ * Reaching it over HTTP (fetching the app's own /api endpoint) failed with a
+ * 404: a self-fetch has to resolve a base URL, pass the middleware gate and
+ * land in the route context rather than the page-render context. Same failure
+ * that broke upload -> process-file.
+ *
+ * Returns NextResponse so the route stays a one-line pass-through and the
+ * many response shapes below are untouched.
+ */
+export async function runGenerateQuestions(request: Request): Promise<Response> {
+  // Hoisted so the outer catch can reference fileId when writing the error back.
+  let fileId: string | undefined
+  try {
+    const body = await request.json()
+    fileId = body.fileId
+    const fileRole = body.fileRole
+
+    if (!fileId) {
+      return NextResponse.json(
+        { error: 'fileId required', code: 'MISSING_FILE_ID' },
+        { status: 400 }
+      )
+    }
+
+    const supabase = await createServerClient_()
+
+    // Fetch file record
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: file } = await supabase
+      .from('files')
+      .select('*')
+      .eq('id', fileId)
+      .single() as any
+
+    if (!file) {
+      return NextResponse.json({ error: 'File not found', code: 'FILE_NOT_FOUND' }, { status: 404 })
+    }
+
+    // Fetch exam for language
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: exam } = await supabase
+      .from('exams')
+      .select('*')
+      .eq('id', file.exam_id)
+      .single() as any
+
+    if (!exam) {
+      return NextResponse.json({ error: 'Exam not found', code: 'EXAM_NOT_FOUND' }, { status: 404 })
+    }
+
+    // Fetch chunks for this file
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: chunks } = await supabase
+      .from('chunks')
+      .select('*')
+      .eq('file_id', fileId) as any
+
+    if (!chunks || chunks.length === 0) {
+      return NextResponse.json(
+        { error: 'No chunks found for file', code: 'NO_CHUNKS' },
+        { status: 400 }
+      )
+    }
+
+    if (fileRole === 'theory') {
+      return await processTheoryFile(supabase, file, exam, chunks, fileId, fileRole)
+    } else if (fileRole === 'past_exam') {
+      return await processPastExamFile(supabase, file, exam, chunks, fileId, fileRole)
+    } else {
+      return NextResponse.json({ error: 'Invalid fileRole', code: 'INVALID_FILE_ROLE' }, { status: 400 })
+    }
+  } catch (error) {
+    console.error('Generate-questions endpoint error:', error)
+    // Write error back to files table on outer failure
+    try {
+      const supabase = await createServerClient_()
+      const errorMsg = error instanceof Error ? error.message : 'Processing failed'
+      await (supabase.from('files') as any)
+        .update({
+          processing_status: 'error',
+          processing_error: `Question generation failed: ${errorMsg}`,
+        })
+        .eq('id', fileId)
+    } catch (dbError) {
+      console.error('Failed to update file status on error:', dbError)
+    }
+    return NextResponse.json(
+      { error: 'Internal server error', code: 'INTERNAL_ERROR' },
+      { status: 500 }
+    )
+  }
+}
+
+async function processTheoryFile(
+  supabase: any,
+  file: any,
+  exam: any,
+  chunks: any[],
+  fileId: string,
+  fileRole: string
+) {
+  try {
+    // Retrieval knobs (subject/language-tunable seam; subject not on the exam
+    // record today, so only language is passed).
+    const rc = getRetrievalConfig({ language: exam.language })
+
+    // Step 1: Build a content-grounded topic→subtopic tree. Real converter
+    // output drops headings, so infer the tree from a sample of actual content.
+    const hierarchy = await extractTopicHierarchy(
+      stratifiedSample(chunks.map((c) => c.content_text || ''), 12),
+      exam.language || 'en',
+      exam.subject || undefined
+    )
+
+    // Step 2: Create topic + subtopic records; collect seeds (name+description+id).
+    const seeds: Array<{ topic: string; name: string; description: string; id: string }> = []
+    for (const topic of hierarchy.topics) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: topicRecord, error: topicInsertError } = await (supabase.from('topics') as any)
+        .insert([{ exam_id: exam.id, name: topic.name }])
+        .select()
+      if (topicInsertError) {
+        throw new Error(`Failed to insert topic "${topic.name}": ${topicInsertError.message}`)
+      }
+      const topicId = topicRecord?.[0]?.id
+      if (!topicId) continue
+      for (const sub of topic.subtopics || []) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: subRecord, error: subErr } = await (supabase.from('subtopics') as any)
+          .insert([{ topic_id: topicId, name: sub.name }])
+          .select()
+        if (subErr) throw new Error(`Failed to insert subtopic "${sub.name}": ${subErr.message}`)
+        if (subRecord?.[0]) {
+          seeds.push({
+            topic: topic.name,
+            name: sub.name,
+            description: sub.description || sub.name,
+            id: subRecord[0].id,
+          })
+        }
+      }
+    }
+
+    // Step 3: Assign chunks to subtopics via seeded embedding refinement.
+    // Ensure chunk embeddings (stored at ingest, else compute now).
+    const needEmb = chunks.filter((c) => !Array.isArray(c.embedding) || c.embedding.length === 0)
+    if (needEmb.length > 0) {
+      try {
+        const vecs = await embedTexts(needEmb.map((c) => c.content_text || ''))
+        needEmb.forEach((c, i) => { c.embedding = vecs[i] })
+      } catch (e) {
+        console.error('Theory chunk embedding failed:', e)
+      }
+    }
+    const descVecs = seeds.length > 0 ? await embedTexts(seeds.map((s) => s.description)) : []
+    const subtopicSeeds = seeds.map((s, i) => ({ topic: s.topic, name: s.name, embedding: descVecs[i] }))
+    const chunkVecs = chunks
+      .filter((c) => Array.isArray(c.embedding) && c.embedding.length > 0)
+      .map((c) => ({ id: c.id, embedding: c.embedding as number[] }))
+
+    const assignments = assignChunksToSubtopics(chunkVecs, subtopicSeeds, {
+      seedK: rc.seedK,
+      iters: rc.iters,
+      confidentMargin: rc.confidentMargin,
+    })
+
+    // Log observed assignment-margin distribution — the only way to set
+    // per-subject thresholds empirically later instead of by guesswork.
+    const margins = assignments.map((a) => a.margin)
+    const mStats = scoreStats(margins)
+    const belowMargin = margins.filter((m) => m < rc.confidentMargin).length
+    console.log(
+      `[retrieval] exam=${exam.id} assign-margins median=${mStats.median.toFixed(3)} ` +
+      `p10=${mStats.p10.toFixed(3)} p90=${mStats.p90.toFixed(3)} ` +
+      `below-confidentMargin=${belowMargin}/${margins.length}`
+    )
+
+    // Decide early whether this exam has real past-exam questions. If so, we
+    // KEEP those and skip AI question generation — and we also skip the LLM
+    // tie-break below, because that refinement only sharpens subtopic labels for
+    // generated questions. Past-exam grounding ranks by embedding similarity and
+    // only needs a coarse chunk→subtopic assignment, which we already have. This
+    // avoids hundreds of sequential LLM calls (the cause of the "stuck" hang
+    // when generating an exam that has past exams).
+    const { data: pastExamFiles } = await (supabase.from('files') as any)
+      .select('id')
+      .eq('exam_id', exam.id)
+      .eq('file_role', 'past_exam')
+    const hasPastExams = (pastExamFiles || []).length > 0
+
+    // Step 3b: LLM tie-break for the unconfident minority only (cost control).
+    // Skipped entirely when generation is skipped (see above).
+    if (!hasPastExams) {
+      const subtopicNames = seeds.map((s) => s.name)
+      for (const a of assignments) {
+        if (a.confident) continue
+        const chunk = chunks.find((c) => c.id === a.chunkId)
+        if (!chunk) continue
+        try {
+          const pick = await tiebreakSubtopic(chunk.content_text || '', subtopicNames, exam.language || 'en')
+          if (pick) {
+            a.subtopic = pick
+            a.topic = seeds.find((s) => s.name === pick)?.topic ?? a.topic
+            a.confident = true
+          }
+        } catch (e) {
+          console.error('Tiebreak failed for chunk', a.chunkId, e)
+        }
+      }
+    }
+
+    // Step 3c: persist chunk → subtopic and group chunks per subtopic.
+    const nameToId = new Map(seeds.map((s) => [s.name, s.id]))
+    const assignedMap = new Map<string, any[]>()
+    for (const a of assignments) {
+      if (!a.subtopic) continue
+      const subtopicId = nameToId.get(a.subtopic)
+      const chunk = chunks.find((c) => c.id === a.chunkId)
+      if (!subtopicId || !chunk) continue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase.from('chunks') as any).update({ subtopic_id: subtopicId }).eq('id', a.chunkId)
+      if (!assignedMap.has(subtopicId)) assignedMap.set(subtopicId, [])
+      assignedMap.get(subtopicId)!.push(chunk)
+    }
+
+    // Step 4: Generate questions + flashcards per subtopic from its chunks.
+    // Skipped when the exam has past exams (see hasPastExams above) — their real
+    // questions are authoritative and AI generation would just add noise.
+    let questionsCreated = 0
+    const subtopicErrors: string[] = []
+
+    for (const seed of seeds) {
+      if (hasPastExams) break // real questions exist — don't AI-generate
+      const subtopicId = seed.id
+      const subtopicName = seed.name
+      const subtopicChunks = assignedMap.get(subtopicId) || []
+      if (subtopicChunks.length === 0) continue
+
+      try {
+        // Generate questions from chunks
+        const questions = await generateQuestionsFromChunks(
+          subtopicChunks.map((c) => ({
+            text: c.content_text,
+            hasImage: c.has_image,
+            imagePath: c.image_storage_path,
+          })),
+          seed.topic,
+          subtopicName,
+          exam.language || 'en',
+          // Undefined (not a medical default) when inference hasn't run, so the
+          // prompt falls back to neutral framing.
+          exam.subject ? { subject: exam.subject, domain: exam.subject_domain || 'other' } : undefined
+        )
+
+        // Insert questions
+        for (const q of questions) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: qRecord, error: qInsertError } = await (supabase.from('questions') as any)
+            .insert([
+              {
+                subtopic_id: subtopicId,
+                chunk_id: subtopicChunks[0].id,
+                question_text: q.question_text,
+                justification: q.justification,
+                language: exam.language || 'en',
+                source: 'ai_generated',
+              },
+            ])
+            .select() as any
+
+          if (qInsertError) {
+            throw new Error(`Failed to insert question: ${qInsertError.message}`)
+          }
+
+          if (!qRecord?.[0]) continue
+
+          const questionId = qRecord[0].id
+
+          // Two de-biasing passes before persisting, because display_order below
+          // is exactly what the quiz renders:
+          //  1. length — the correct option is otherwise the longest ~50% of the
+          //     time (25% = unbiased), and a prompt rule did not move it.
+          //  2. position — generators emit the correct option first, up to 100%.
+          const balanced = await equalizeOptionLengths(q, exam.language || 'en')
+          const shuffledOptions = shuffleOptions(balanced)
+          for (let i = 0; i < shuffledOptions.length; i++) {
+            const opt = shuffledOptions[i]
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { error: optInsertError } = await (supabase.from('question_options') as any)
+              .insert([
+                {
+                  question_id: questionId,
+                  option_text: opt.text,
+                  is_correct: opt.is_correct,
+                  display_order: i,
+                },
+              ])
+            if (optInsertError) {
+              console.error(`Failed to insert option for question ${questionId}:`, optInsertError.message)
+            }
+          }
+
+          questionsCreated++
+        }
+
+        // Generate flashcards
+        const flashcards = await generateFlashcardsFromChunks(
+          subtopicChunks.map((c) => ({ text: c.content_text })),
+          seed.topic,
+          subtopicName,
+          exam.language || 'en',
+          exam.subject || undefined
+        )
+
+        // Insert flashcards as special questions
+        for (const fc of flashcards) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: fcInsertError } = await (supabase.from('questions') as any)
+            .insert([
+              {
+                subtopic_id: subtopicId,
+                chunk_id: subtopicChunks[0].id,
+                question_text: fc.front,
+                justification: fc.back,
+                language: exam.language || 'en',
+                question_type: 'flashcard',
+                source: 'ai_generated',
+              },
+            ])
+          if (fcInsertError) {
+            console.error(`Failed to insert flashcard for subtopic ${subtopicName}:`, fcInsertError.message)
+          }
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        console.error(`Error generating questions for subtopic ${subtopicName}:`, msg)
+        subtopicErrors.push(`${subtopicName}: ${msg}`)
+      }
+    }
+
+    // Write success + mark done
+    await (supabase.from('files') as any)
+      .update({ processing_status: 'done' })
+      .eq('id', fileId)
+
+    // If there were partial failures, log them in processing_error
+    if (subtopicErrors.length > 0) {
+      const errorSummary = subtopicErrors.slice(0, 3).join('; ')
+      await (supabase.from('files') as any)
+        .update({ processing_error: `Partial failure in ${subtopicErrors.length} subtopic(s): ${errorSummary}` })
+        .eq('id', fileId)
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        fileId,
+        fileRole,
+        subtopicsCreated: seeds.length,
+        questionsCreated,
+        generationSkipped: hasPastExams,
+        subtopicErrors: subtopicErrors.length > 0 ? subtopicErrors : undefined,
+      },
+      { status: 200 }
+    )
+  } catch (error) {
+    console.error('Theory file processing error:', error)
+    const errorMsg = error instanceof Error ? error.message : 'Processing failed'
+    await (supabase.from('files') as any)
+      .update({
+        processing_status: 'error',
+        processing_error: `Question generation failed: ${errorMsg}`,
+      })
+      .eq('id', fileId)
+    return NextResponse.json(
+      {
+        success: false,
+        fileId,
+        error: errorMsg,
+        code: 'PROCESSING_FAILED',
+      },
+      { status: 500 }
+    )
+  }
+}
+
+async function processPastExamFile(
+  supabase: any,
+  file: any,
+  exam: any,
+  chunks: any[],
+  fileId: string,
+  fileRole: string
+) {
+  try {
+    const rc = getRetrievalConfig({ language: exam.language })
+
+    // Reconstruct markdown from this past-exam file's chunks
+    const markdown = chunks.map((c) => c.content_text).join('\n\n')
+
+    // Extract the questions (options preserved; answer key usually absent)
+    const examResult = await extractPastExamQuestions(markdown, exam.language || 'en')
+
+    // MCQ-only by design: answer determination needs discrete options to choose
+    // between (see answerExamQuestion). Open questions are extracted but skipped —
+    // counted here so the user is told rather than silently losing them.
+    const mcqs = examResult.questions.filter((q) => q.type === 'mcq')
+    const skippedOpen = examResult.questions.length - mcqs.length
+
+    // Real mode: pgvector RPC (migration 009) does indexed ANN search in Postgres.
+    // Mock mode: fetch all theory chunks + brute-force JS cosine (RPC unavailable).
+    const usePgVector = !isEmbedMockEnabled()
+
+    // Mock-only: load all theory chunks with embeddings upfront.
+    let theoryChunks: any[] = []
+    let embeddedCandidates: Array<{ id: string; subtopicId: string | null; embedding: number[] | null }> = []
+    if (!usePgVector) {
+      const { data: theoryFiles } = await (supabase.from('files') as any)
+        .select('id')
+        .eq('exam_id', exam.id)
+        .eq('file_role', 'theory')
+      const theoryFileIds = (theoryFiles || []).map((f: any) => f.id)
+      if (theoryFileIds.length > 0) {
+        const { data } = await (supabase.from('chunks') as any)
+          .select('*')
+          .in('file_id', theoryFileIds)
+        theoryChunks = (data || []).filter((c: any) => c.subtopic_id)
+      }
+      const needEmbed = theoryChunks.filter(
+        (c) => !Array.isArray(c.embedding) || c.embedding.length === 0
+      )
+      if (needEmbed.length > 0) {
+        try {
+          const vecs = await embedTexts(needEmbed.map((c) => c.content_text || ''))
+          needEmbed.forEach((c, i) => { c.embedding = vecs[i] })
+        } catch (e) {
+          console.error('Theory chunk embedding failed:', e)
+        }
+      }
+      embeddedCandidates = theoryChunks.map((c) => ({
+        id: c.id,
+        subtopicId: c.subtopic_id,
+        embedding: c.embedding,
+      }))
+    }
+
+    // Embed all MCQ question texts in one batch (both modes need question vectors).
+    let qVectors: number[][] = []
+    const canGround = usePgVector || embeddedCandidates.length > 0
+    if (mcqs.length > 0 && canGround) {
+      try {
+        qVectors = await embedTexts(mcqs.map((q) => q.question_text), 'query')
+      } catch (e) {
+        console.error('Question embedding failed:', e)
+      }
+    }
+
+    let unsortedSubtopicId: string | null = null
+    let questionsCreated = 0
+    let questionsFlagged = 0
+    const questionErrors: string[] = []
+    const matchScores: number[] = [] // observed best-match scores, logged at end
+
+    for (let qi = 0; qi < mcqs.length; qi++) {
+      const q = mcqs[qi]
+
+      try {
+        const qVec = qVectors[qi]
+
+        // Retrieve the best matching theory chunk.
+        let matchChunkId = ''
+        let matchSubtopicId: string | null = null
+        let matchScore = 0
+        let matchedContent = ''
+        let candidateScores: number[] = []
+
+        if (qVec && usePgVector) {
+          const rpc = await matchChunkForQuestion(supabase, exam.id, qVec, rc.annCandidates)
+          matchChunkId = rpc.chunkId
+          matchSubtopicId = rpc.subtopicId
+          matchScore = rpc.score
+          matchedContent = rpc.contentText
+          candidateScores = rpc.candidateScores
+        } else if (qVec && embeddedCandidates.length > 0) {
+          const bf = findBestChunkByEmbedding(qVec, embeddedCandidates)
+          matchChunkId = bf.chunkId
+          matchSubtopicId = bf.subtopicId
+          matchScore = bf.score
+          matchedContent = theoryChunks.find((c) => c.id === bf.chunkId)?.content_text || ''
+          candidateScores = bf.candidateScores
+        }
+
+        matchScores.push(matchScore)
+        // Absolute (default) vs relative self-calibrating gate. Relative is
+        // OFF unless RETRIEVAL_RELATIVE_GATES=true; both decisions are logged
+        // when on so they can be compared on real data before any switchover.
+        const gate = decideGrounding({
+          bestScore: matchScore,
+          candidateScores,
+          hasSubtopic: !!matchSubtopicId,
+          matchMinScore: rc.matchMinScore,
+        })
+        if (relativeGatesEnabled() && gate.absolute !== gate.relative) {
+          console.log(
+            `[gate] exam=${exam.id} q=${qi} DIVERGE abs=${gate.absolute} rel=${gate.relative} ` +
+            `best=${matchScore.toFixed(3)} pool=[${candidateScores.slice(0, 5).map((s) => s.toFixed(3)).join(',')}]`
+          )
+        }
+        const grounded = gate.grounded
+
+        // AI-answer from the matched theory (empty source => unanswerable).
+        const answer = await answerExamQuestion(
+          q.question_text,
+          q.options || [],
+          grounded ? matchedContent : '',
+          exam.language || 'en'
+        )
+
+        const isAnswered = answer.answerable && answer.confidence >= ANSWER_MIN_CONFIDENCE
+
+        // Where to file it: matched subtopic, else a shared "Unsorted" bucket.
+        let subtopicId = grounded ? matchSubtopicId : null
+        if (!subtopicId) {
+          if (!unsortedSubtopicId) {
+            unsortedSubtopicId = await ensureUnsortedSubtopic(supabase, exam.id)
+          }
+          subtopicId = unsortedSubtopicId
+        }
+        if (!subtopicId) {
+          questionErrors.push(`No subtopic available for: ${q.question_text.slice(0, 60)}`)
+          continue
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: qRecord, error: qInsertError } = await (supabase.from('questions') as any)
+          .insert([
+            {
+              subtopic_id: subtopicId,
+              chunk_id: matchChunkId || null,
+              matched_chunk_id: matchChunkId || null,
+              question_text: q.question_text,
+              justification: answer.justification || '',
+              language: exam.language || 'en',
+              source: 'past_exam',
+              past_exam_year: examResult.year,
+              ai_confidence: isAnswered ? answer.confidence : null,
+              answer_status: isAnswered ? 'ai_answered' : 'unanswerable',
+            },
+          ])
+          .select() as any
+
+        if (qInsertError) {
+          throw new Error(`Failed to insert question: ${qInsertError.message}`)
+        }
+        if (!qRecord?.[0]) continue
+        const questionId = qRecord[0].id
+
+        // Insert options. Mark the AI-chosen letter correct only when answered.
+        const options = q.options || []
+        for (let i = 0; i < options.length; i++) {
+          const optText = options[i]
+          const isCorrect = isAnswered && optionLetter(optText) === answer.choice
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: optInsertError } = await (supabase.from('question_options') as any)
+            .insert([
+              {
+                question_id: questionId,
+                option_text: optText,
+                is_correct: isCorrect,
+                display_order: i,
+              },
+            ])
+          if (optInsertError) {
+            console.error(`Failed to insert option for question ${questionId}:`, optInsertError.message)
+          }
+        }
+
+        if (isAnswered) questionsCreated++
+        else questionsFlagged++
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        console.error(
+          `[${new Date().toISOString()}] Error processing past exam question[${qi}]:\n` +
+          `  question: ${q.question_text?.slice(0, 200)}\n` +
+          `  options: ${JSON.stringify(q.options?.slice(0, 4))}\n` +
+          `  error: ${msg}`
+        )
+        questionErrors.push(msg)
+      }
+    }
+
+    // Log observed match-score distribution for empirical per-subject tuning.
+    const sStats = scoreStats(matchScores)
+    const belowMin = matchScores.filter((s) => s < rc.matchMinScore).length
+    console.log(
+      `[retrieval] exam=${exam.id} match-scores median=${sStats.median.toFixed(3)} ` +
+      `p10=${sStats.p10.toFixed(3)} p90=${sStats.p90.toFixed(3)} ` +
+      `below-matchMinScore=${belowMin}/${matchScores.length}`
+    )
+
+    // Write success + mark done
+    await (supabase.from('files') as any)
+      .update({ processing_status: 'done' })
+      .eq('id', fileId)
+
+    // Surface failures and skipped-open notices in one field. Skipped opens are
+    // NOT a failure — the file still completes 'done'; the user just needs to
+    // know those questions didn't become study material.
+    const notices: string[] = []
+    if (questionErrors.length > 0) {
+      notices.push(
+        `Failed to process ${questionErrors.length} question(s): ${questionErrors.slice(0, 3).join('; ')}`
+      )
+    }
+    if (skippedOpen > 0) {
+      notices.push(
+        `Skipped ${skippedOpen} open-ended question(s) — only multiple-choice questions can be turned into study material.`
+      )
+    }
+    if (notices.length > 0) {
+      await (supabase.from('files') as any)
+        .update({ processing_error: notices.join(' ') })
+        .eq('id', fileId)
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        fileId,
+        fileRole,
+        questionsCreated,
+        questionsFlagged,
+        skippedOpen,
+        questionErrors: questionErrors.length > 0 ? questionErrors : undefined,
+      },
+      { status: 200 }
+    )
+  } catch (error) {
+    console.error('Past exam file processing error:', error)
+    const errorMsg = error instanceof Error ? error.message : 'Processing failed'
+    await (supabase.from('files') as any)
+      .update({
+        processing_status: 'error',
+        processing_error: `Question generation failed: ${errorMsg}`,
+      })
+      .eq('id', fileId)
+    return NextResponse.json(
+      {
+        success: false,
+        fileId,
+        error: errorMsg,
+        code: 'PROCESSING_FAILED',
+      },
+      { status: 500 }
+    )
+  }
+}
