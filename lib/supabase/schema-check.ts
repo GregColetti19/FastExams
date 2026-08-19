@@ -62,46 +62,41 @@ export async function checkSchema(): Promise<void> {
   if (!url || !key) return
 
   try {
-    const tables = [...new Set(EXPECTED.map((e) => e.table))]
-    const inClause = tables.map((t) => `'${t}'`).join(',')
+    // PostgREST's OpenAPI document lists the real columns of every exposed
+    // table, generated from the live catalog. The previous implementation
+    // called a `run_sql` RPC that has NEVER existed in this project — every
+    // boot 404'd and skipped, so this check silently validated nothing while
+    // migrations 010-012 sat unapplied. Anything here must use an endpoint
+    // that actually exists.
+    const res = await fetch(`${url}/rest/v1/`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+    })
 
-    const res = await fetch(
-      `${url}/rest/v1/rpc/run_sql`,
-      {
-        method: 'POST',
-        headers: {
-          apikey: key,
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: `
-            SELECT table_name, column_name
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name IN (${inClause})
-          `,
-        }),
-      }
-    )
-
-    // Fall back to per-table HEAD probes if RPC not available
     if (!res.ok) {
-      console.warn('[schema-check] run_sql RPC not available — skipping schema validation')
+      console.warn(`[schema-check] schema fetch failed (HTTP ${res.status}) — skipping validation`)
       return
     }
 
-    const rows: { table_name: string; column_name: string }[] = await res.json()
-    const live = new Set(rows.map((r) => `${r.table_name}.${r.column_name}`))
+    const spec = (await res.json()) as {
+      definitions?: Record<string, { properties?: Record<string, unknown> }>
+    }
+    const defs = spec.definitions
+    if (!defs) {
+      console.warn('[schema-check] no table definitions in schema document — skipping validation')
+      return
+    }
 
-    const missing = EXPECTED.filter((e) => !live.has(`${e.table}.${e.column}`))
+    const missing = EXPECTED.filter(
+      (e) => !defs[e.table]?.properties || !(e.column in (defs[e.table]!.properties as object))
+    )
+
     if (missing.length === 0) {
-      console.log('[schema-check] ✓ All expected columns present in Supabase')
+      console.log(`[schema-check] ✓ all ${EXPECTED.length} expected columns present`)
     } else {
       console.error(
         `[schema-check] ✗ MISSING ${missing.length} column(s) — unapplied migrations detected:\n` +
-        missing.map((m) => `  • ${m.table}.${m.column}${m.type ? ` (${m.type})` : ''}`).join('\n') +
-        '\n  Run the missing migrations in the Supabase SQL Editor.'
+          missing.map((m) => `  • ${m.table}.${m.column}${m.type ? ` (${m.type})` : ''}`).join('\n') +
+          '\n  Apply the pending migrations (see supabase/migrations/).'
       )
     }
   } catch (err) {
