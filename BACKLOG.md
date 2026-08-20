@@ -463,9 +463,12 @@ for a real user today.
    more exams, and ideally #3. → "Still open"
 9. 🟠 **Deployment on app/mobile.** Noted, unscoped, no work started.
    → "UX updates (18-07-2026)"
-10. 🟡 **Async work fire-and-forget — two sites.** `generate-exam/route.ts:74` and
-    `upload/route.ts:127`. Failures only surface via DB status; no queue, no retry.
-    → "Known broken / limited on real data"
+10. 🟡 **Async work fire-and-forget — one site left.** `upload/route.ts` fixed
+    2026-08-19 (now awaited in-process). `generate-exam/route.ts:75` still uses
+    `setImmediate`: it runs up to 20 min per file so it cannot be awaited inside
+    a request. Works on Railway's long-lived container, but the callback is not
+    guaranteed to run — a real job queue is the durable fix.
+    → "Production deploy debugging (2026-08-19)"
 11. 🟡 **Truncation warns but isn't handled.** `lib/ai/usage.ts:31` logs on
     `finish_reason=length` and does nothing — no retry with higher `max_tokens`
     or smaller batch. Silent partial output. → "Still open"
@@ -479,12 +482,16 @@ for a real user today.
     `lib/ai/generate-questions.ts:271` is still a TODO stub (never fetches from
     Storage). Reuses the embedding retrieval layer. → "Deferred features"
 14. 🟡 **Optional timer.** Nothing exists. → "UX updates (18-07-2026)"
-15. 🔵 **Mock user ID duplicated in 2 places.** `FlashcardEngine.tsx:17` +
-    `QuizEngine.tsx:45`. Confirmed exactly 2. Trivial extraction; blocks nothing
-    until real auth lands. → "Hardcoded assumptions to revisit"
-16. 🔵 **MCQ lettered A–E assumption, now in 2 routes.** `optionLetter()`
-    copy-pasted into `generate-questions:19` and `recalibrate:10`. Intentional
-    design, but the duplication is real debt. → "Hardcoded assumptions to revisit"
+15. ✅ ~~**Mock user ID duplicated in 2 places.**~~ **DONE (verified 2026-08-19)** —
+    both components now resolve the user through `supabase.auth.getUser()`. The
+    only remaining literal is `lib/supabase/mock/store.ts:12`, which is the mock
+    store's own seed user and belongs there. Real auth has since landed.
+    → "Hardcoded assumptions to revisit"
+16. 🔵 **MCQ lettered A–E assumption, in 2 modules.** `optionLetter()`
+    copy-pasted into `lib/ai/generate-questions-run.ts:19` and
+    `lib/ai/recalibrate-run.ts:10` (both moved out of `app/api/` on 2026-08-19).
+    Intentional design, but the duplication is real debt.
+    → "Hardcoded assumptions to revisit"
 17. 🔵 **Mastery-over-time has no trend data.** No `mastery_snapshots` table
     (migrations stop at 012). Left honestly absent from Analytics rather than
     faked. → "UX / frontend"
@@ -499,8 +506,57 @@ for a real user today.
 
 ### Also worth noting
 
-⚠️ **RLS disabled on all tables** (migration 003) on the real project. Fine for
-solo dev; **must** be revisited before any multi-user or public deploy — that is a
-data-exposure issue the moment a second user exists, not a nice-to-have.
-Not ranked above because it is a deploy gate, not current work.
+✅ ~~**RLS disabled on all tables** (migration 003).~~ **DONE 2026-08-18/19** —
+migration 013 on live (`smkuscpfrzmewsijlefb`) added owner-scoped storage policies,
+`profiles.is_admin`, and `public.is_admin()`; migration 014 brought dev
+(`zwyhbjkqxwpqecpabhbs`) to parity. `npm run db:parity` diffs both projects and
+exits non-zero on drift. Storage objects are owner-prefixed (`<user_id>/<file>`).
 
+⚠️ **Still off on dev for topics / subtopics / questions / attempts / study_sessions.**
+Live has them enabled. Not a data-exposure issue there (single user, dev data), but
+it is drift `db:parity` deliberately allow-lists.
+
+⚠️ **19 orphaned storage objects on dev** — pre-date the cleanup added to
+`app/api/exam/[examId]/route.ts` (which now removes objects on exam delete).
+
+## Production deploy debugging (2026-08-19)
+
+First real alpha deploy on Railway. Seven faults, each masking the next — the
+upload 403 that started it was the *last* one visible, not the first one broken.
+All fixed and verified on live.
+
+| Fault | Cause | Fix |
+|---|---|---|
+| Upload 403 `new row violates RLS` | every build failed on a TS7006 in the storage-cleanup filter; Railway kept serving the last good container, so the app ran pre-fix code writing flat storage paths that migration 013's owner-scoped policy correctly rejected | `e41abae` |
+| `ERR_SSL_PACKET_LENGTH_TOO_LONG` | `request.nextUrl.origin` is the public `https://` URL behind Railway's TLS-terminating proxy; the container listens on plain HTTP | `5ebabe7` |
+| Silent hang, no logs, no error | `convertFile` had no timeout — an unreachable converter never threw, so the file sat at `processing` forever | `fc1b7da` |
+| `getaddrinfo ENOTFOUND converter.railway.internal` | Railway private domains do not follow service renames — the service is named `Converter` but answers to `fastexams.railway.internal` | config |
+| Stuck at `processing`, converter never contacted | `setImmediate` callback dropped after the response was sent | `3c80360` |
+| `process-file returned 404` | self-fetching the app's own `/api` endpoint resolves in the page-render context, not the route context | `3644692` |
+| `generate-questions returned 404` | same self-fetch failure, one step later | `59ac24b` |
+| `[schema-check] run_sql RPC not available` on every boot | the validator called an RPC that **has never existed in this project** — it returned early every time, silently validating nothing. This is why migrations 010-012 sat unapplied unnoticed | `bb83b9a` |
+
+### Lessons worth keeping
+
+- **A Railway service showing Online + healthcheck passing can be running stale
+  code.** A failed build leaves the previous container serving; only the *build*
+  log shows the failure. Verify with
+  `grep -c "<new string>" .next/server/app/api/<route>/route.js` in the Console.
+  Note routes compile to `.next/server/app/api/<name>/route.js`, **not** to
+  `.next/server/chunks/*.js`.
+- **Redeploy ≠ deploy latest.** Redeploy rebuilds the commit that deployment was
+  pinned to.
+- **Never self-fetch your own API routes.** It has to resolve a base URL, pass
+  the middleware gate, and land in the route context. Extract to a `lib/` module
+  and call in-process. A route-to-route import does **not** bundle — Next treats
+  route modules as separate entry points — but a shared `lib/` module does.
+
+### New / still open from this session
+
+- 🟡 **`generate-exam` still uses `setImmediate`** — see ranked item #10.
+- 🔵 **Node engine mismatch.** `package.json` requires `>=22.19.0 <23`; Nixpacks
+  provides `22.14.0`. Builds pass with an `EBADENGINE` warning. Either pin the
+  Nixpacks Node version or relax the range.
+- 🔵 **Upload response now waits for full conversion.** Fine for small files;
+  a large PDF could approach a proxy timeout. The fix is a job queue, not another
+  self-fetch.
